@@ -9,7 +9,7 @@ Everything runs **offboard on your workstation** except the **camera server**, w
 
 ```{admonition} Supported cameras
 :class: note
-The tested and supported camera setup uses **Luxonis OAK cameras** (OAK-D, OAK-1, etc.). This includes a head/ego-view OAK camera and optional OAK wrist cameras. Other camera drivers (RealSense, USB webcam) are included in the codebase but have not been tested recently.
+The tested and supported camera setup uses **Luxonis OAK cameras** (OAK-D, OAK-1, etc.). This includes a head/ego-view OAK camera and optional OAK wrist cameras. Other camera drivers (RealSense, USB webcam) are included in the codebase but are not part of the tested data-collection setup.
 ```
 
 ```{admonition} Prerequisites
@@ -78,7 +78,7 @@ journalctl -u composed_camera_server.service -f
 ```
 
 ```{note}
-Other camera drivers (RealSense, USB webcam) are included in the codebase but have not been tested recently for data collection. If you need RealSense, install `pyrealsense2` into the venv after setup. See the driver files in `gear_sonic/camera/drivers/` for details.
+Other camera drivers (RealSense, USB webcam) are included in the codebase but are not part of the tested data-collection setup. If you need RealSense, install `pyrealsense2` into the venv after setup. See the driver files in `gear_sonic/camera/drivers/` for details.
 ```
 
 ### Manual setup (alternative)

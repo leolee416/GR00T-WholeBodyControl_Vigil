@@ -2,6 +2,9 @@
 
 This directory contains the source code for the GR00T-WholeBodyControl documentation website.
 
+For Codex-facing maintained documentation and Vigil bridge integration notes,
+see [`INDEX.md`](INDEX.md).
+
 ## Building Locally
 
 ### Prerequisites
@@ -61,6 +64,8 @@ The live documentation will be available at:
   - `user_guide/` - User guide
   - `api/` - API reference
   - `resources/` - Additional resources
+- `INDEX.md` - Codex-facing documentation index
+- `vigil_bridge_integration.md` - GR00T-side Vigil bridge boundary notes
 
 ## Writing Documentation
 
