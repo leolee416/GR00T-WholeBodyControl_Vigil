@@ -115,6 +115,11 @@ class RealRuntimeClient:
                     port=self.config.camera_port,
                 )
 
+            if self.config.auto_start_control:
+                if not self.config.motion_enabled:
+                    raise RuntimeError("auto_start_control requires motion_enabled")
+                self.send_start_control()
+
             state = self.wait_for_state(timeout=self.config.state_timeout_s)
             if state is None:
                 raise RuntimeError("no real-robot g1_debug state received")
@@ -123,10 +128,6 @@ class RealRuntimeClient:
 
             self.started = True
             self._startup_error = None
-            if self.config.auto_start_control:
-                if not self.config.motion_enabled:
-                    raise RuntimeError("auto_start_control requires motion_enabled")
-                self.send_start_control()
         except Exception as exc:  # noqa: BLE001 - return structured health.
             self._startup_error = str(exc)
             self.halt()
