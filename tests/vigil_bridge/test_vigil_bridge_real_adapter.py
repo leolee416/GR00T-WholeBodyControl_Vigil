@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -139,6 +140,26 @@ def _service(runtime: FakeRealRuntime) -> VigilBridgeService:
     )
 
 
+def _write_move_model(tmp_path: Path) -> Path:
+    path = tmp_path / "move_model.json"
+    path.write_text(
+        """{
+          "models": {
+            "forward": [
+              {"magnitude_abs": 0.25, "rate": 0.40, "execute_time": 0.70},
+              {"magnitude_abs": 0.50, "rate": 0.75, "execute_time": 0.80}
+            ],
+            "backward": [
+              {"magnitude_abs": 0.25, "rate": 0.35, "execute_time": 0.75},
+              {"magnitude_abs": 0.50, "rate": 0.65, "execute_time": 0.90}
+            ]
+          }
+        }""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_real_backend_rejects_motion_by_default() -> None:
     runtime = FakeRealRuntime(config=RealBridgeConfig(motion_enabled=False))
     service = _service(runtime)
@@ -164,14 +185,16 @@ def test_real_backend_rejects_motion_by_default() -> None:
     assert runtime.moves == []
 
 
-def test_real_executor_maps_forward_to_conservative_runtime_move() -> None:
+def test_real_executor_maps_forward_to_runtime_move_model(tmp_path: Path) -> None:
+    model_path = _write_move_model(tmp_path)
     runtime = FakeRealRuntime(
         config=RealBridgeConfig(
             motion_enabled=True,
             camera_enabled=True,
             camera_required=True,
             default_move_speed_mps=0.15,
-            max_move_speed_mps=0.30,
+            max_move_speed_mps=1.50,
+            move_model_file=str(model_path),
         )
     )
     service = _service(runtime)
@@ -182,31 +205,33 @@ def test_real_executor_maps_forward_to_conservative_runtime_move() -> None:
             "step_id": 2,
             "runtime_mode": "real",
             "skill_name": "navigate.forward",
-            "arguments": {"distance_m": 0.10},
-            "safety": {"max_speed_mps": 0.50, "timeout_s": 5.0},
+            "arguments": {"distance_m": 0.50},
+            "safety": {"timeout_s": 5.0},
         }
     )
 
     assert response["ok"] is True
     assert response["action_status"] == "completed"
     assert response["executed_arguments"]["skill_name"] == "navigate.forward"
-    assert response["executed_arguments"]["primitive"] == "move_open_loop"
-    assert response["executed_arguments"]["distance_m"] == 0.10
-    assert response["executed_arguments"]["speed_mps"] == 0.30
+    assert response["executed_arguments"]["primitive"] == "move_model"
+    assert response["executed_arguments"]["distance_m"] == 0.50
+    assert response["executed_arguments"]["max_speed_mps"] == 1.50
+    assert response["executed_arguments"]["move_model_file"] == str(model_path)
     assert runtime.moves == [
         {
-            "distance_m": 0.10,
-            "speed_mps": 0.30,
-            "duration_s": pytest.approx(0.10 / 0.30),
+            "distance_m": 0.50,
+            "speed_mps": 0.75,
+            "duration_s": 0.80,
         }
     ]
     assert response["telemetry"]["phase"] == "real_adapter_phase1"
     assert response["telemetry"]["dry_run"] is False
     assert response["telemetry"]["completion"]["capture_timing"] == "after_settle"
+    assert response["telemetry"]["move_model"]["enabled"] is True
 
 
 def test_real_executor_halts_on_runtime_exception() -> None:
-    runtime = FakeRealRuntime(fail_move=True)
+    runtime = FakeRealRuntime(config=RealBridgeConfig(motion_enabled=True, use_move_model=False), fail_move=True)
     service = _service(runtime)
 
     response = service.execute_action(
@@ -319,6 +344,7 @@ def test_real_auto_start_sends_command_before_waiting_for_state(monkeypatch: pyt
             camera_enabled=False,
             camera_required=False,
             state_timeout_s=0.01,
+            startup_command_burst_s=0.0,
         )
     )
 

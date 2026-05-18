@@ -8,6 +8,7 @@ starts the GR00T-side Vigil HTTP bridge on the robot host.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import shlex
@@ -68,6 +69,13 @@ def _build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--state-host", default="127.0.0.1", help="Bridge ZMQ state host.")
     start_parser.add_argument("--state-port", type=int, default=5557, help="Bridge ZMQ state port.")
     start_parser.add_argument("--state-topic", default="g1_debug", help="Bridge ZMQ state topic.")
+    start_parser.add_argument("--state-timeout", type=float, default=10.0, help="Seconds bridge waits for g1_debug state.")
+    start_parser.add_argument("--max-speed-mps", type=float, default=2.0, help="Maximum real-robot move speed threshold in m/s.")
+    start_parser.add_argument("--move-model-file", default="auto", help="Move model JSON path, or 'auto' for latest output.")
+    start_parser.add_argument("--disable-move-model", action="store_true", help="Use direct open-loop move instead of move_model.")
+    start_parser.add_argument("--model-chunk-pause", type=float, default=0.0, help="Pause between move_model chunks.")
+    start_parser.add_argument("--camera-host", default="localhost", help="Real camera ZMQ host.")
+    start_parser.add_argument("--camera-port", type=int, default=5555, help="Real camera ZMQ port.")
     start_parser.add_argument("--no-real-motion", action="store_true", help="Do not pass --enable-real-motion.")
     start_parser.add_argument("--no-auto-start-control", action="store_true", help="Do not pass --auto-start-control.")
     start_parser.add_argument(
@@ -99,6 +107,7 @@ def start(args: argparse.Namespace) -> int:
         print(f"tmux session already exists: {args.session}", file=sys.stderr)
         print(f"Use './vigil_bridge attach' or './vigil_bridge stop' first.", file=sys.stderr)
         return 1
+    _stop_stale_bridge_service(args.bridge_port)
 
     runtime_dir = _runtime_dir(args.session)
     runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -117,6 +126,7 @@ def start(args: argparse.Namespace) -> int:
     _write_script(bridge_script, _bridge_script(args, policy_log, bridge_log))
 
     _run(["tmux", "new-session", "-d", "-s", args.session, "-n", "container", str(container_script)])
+    _run(["tmux", "set-option", "-t", args.session, "remain-on-exit", "on"])
     _run(["tmux", "new-window", "-t", args.session, "-n", "policy", str(policy_script)])
     _run(["tmux", "new-window", "-t", args.session, "-n", "bridge", str(bridge_script)])
 
@@ -135,6 +145,7 @@ def stop(args: argparse.Namespace) -> int:
     bridge_base_url = f"http://{args.bridge_host}:{args.bridge_port}"
     _post_json(f"{bridge_base_url}/halt", b'{"runtime_mode":"real"}', timeout=2.0)
     _post_json(f"{bridge_base_url}/close", b'{"runtime_mode":"real"}', timeout=2.0)
+    _terminate_bridge_processes()
 
     if _docker_container_exists(args.container_name):
         _run(
@@ -151,6 +162,7 @@ def stop(args: argparse.Namespace) -> int:
 
     if _tmux_session_exists(args.session):
         _run(["tmux", "kill-session", "-t", args.session], check=False)
+    _terminate_bridge_processes()
 
     if _docker_container_exists(args.container_name):
         _run(["docker", "rm", "-f", args.container_name], check=False)
@@ -252,8 +264,23 @@ def _bridge_script(args: argparse.Namespace, policy_log: Path, bridge_log: Path)
         str(args.state_port),
         "--state-topic",
         args.state_topic,
+        "--state-timeout",
+        str(args.state_timeout),
+        "--max-speed-mps",
+        str(args.max_speed_mps),
+        "--move-model-file",
+        args.move_model_file,
+        "--model-chunk-pause",
+        str(args.model_chunk_pause),
+        "--real-camera",
+        "--camera-host",
+        args.camera_host,
+        "--camera-port",
+        str(args.camera_port),
         "--verbose",
     ]
+    if args.disable_move_model:
+        bridge_args.append("--disable-move-model")
     if not args.no_real_motion:
         bridge_args.append("--enable-real-motion")
     if not args.no_auto_start_control:
@@ -279,15 +306,33 @@ PY
         echo "[launcher] requesting reset_episode to initialize runtime"
         python3 - <<'PY' || true
 import json
+import time
 import urllib.request
+url = "http://127.0.0.1:{args.bridge_port}/reset_episode"
 data = json.dumps({{"runtime_mode": "real"}}).encode("utf-8")
-req = urllib.request.Request(
-    "http://127.0.0.1:{args.bridge_port}/reset_episode",
-    data=data,
-    headers={{"Content-Type": "application/json"}},
-    method="POST",
-)
-print(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
+last_text = ""
+for attempt in range(1, 13):
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={{"Content-Type": "application/json"}},
+        method="POST",
+    )
+    try:
+        text = urllib.request.urlopen(req, timeout=20).read().decode("utf-8")
+    except Exception as exc:
+        text = json.dumps({{"ok": False, "error_message": str(exc)}})
+    last_text = text
+    print(f"[launcher] reset_episode attempt {{attempt}}: {{text}}", flush=True)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = {{}}
+    if payload.get("ok") is True:
+        break
+    time.sleep(2)
+else:
+    print(f"[launcher] reset_episode did not become ready; latest response: {{last_text}}", flush=True)
 PY
         """
 
@@ -302,7 +347,7 @@ PY
         cd {shlex.quote(str(REPO_ROOT))}
         {quoted_bridge_cmd} 2>&1 | tee {shlex.quote(str(bridge_log))} &
         bridge_pid=$!
-        trap 'kill "$bridge_pid" 2>/dev/null || true; wait "$bridge_pid" 2>/dev/null || true' INT TERM EXIT
+        trap 'kill "$bridge_pid" 2>/dev/null || true; wait "$bridge_pid" 2>/dev/null || true' INT TERM HUP EXIT
         {textwrap.indent(textwrap.dedent(reset_block), "        ")}
         wait "$bridge_pid"
     """
@@ -316,6 +361,14 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         raise SystemExit(f"TensorRT include not found: {trt / 'include' / 'NvInfer.h'}")
     if not (trt / "lib").exists():
         raise SystemExit(f"TensorRT lib directory not found: {trt / 'lib'}")
+    if args.max_speed_mps <= 0.0:
+        raise SystemExit("--max-speed-mps must be positive")
+    if args.max_speed_mps > 2.0:
+        raise SystemExit("--max-speed-mps must be <= 2.0 for real-robot mode")
+    if args.model_chunk_pause < 0.0:
+        raise SystemExit("--model-chunk-pause must be >= 0")
+    if args.camera_port <= 0:
+        raise SystemExit("--camera-port must be positive")
 
 
 def _write_script(path: Path, content: str) -> None:
@@ -340,6 +393,48 @@ def _tmux_session_exists(session: str) -> bool:
 
 def _docker_container_exists(container: str) -> bool:
     return _run(["docker", "inspect", container], check=False, capture_output=True).returncode == 0
+
+
+def _stop_stale_bridge_service(port: int) -> None:
+    url = f"http://127.0.0.1:{port}/health"
+    health = _get_text(url, timeout=0.5)
+    if not health:
+        return
+
+    try:
+        payload = json.loads(health)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"HTTP port {port} is already in use by a non-bridge service.") from exc
+
+    if payload.get("protocol_version") != "vigil_groot_bridge_v1":
+        raise SystemExit(f"HTTP port {port} is already in use by an unknown service.")
+
+    print(f"[launcher] stale bridge service detected on 127.0.0.1:{port}; stopping it first")
+    bridge_base_url = f"http://127.0.0.1:{port}"
+    _post_json(f"{bridge_base_url}/halt", b'{"runtime_mode":"real"}', timeout=2.0)
+    _post_json(f"{bridge_base_url}/close", b'{"runtime_mode":"real"}', timeout=2.0)
+    _terminate_bridge_processes()
+    if _wait_for_http_down(url, timeout_s=5.0):
+        return
+    raise SystemExit(f"stale bridge service on 127.0.0.1:{port} did not exit")
+
+
+def _terminate_bridge_processes() -> None:
+    patterns = [
+        "gear_sonic_deploy/scripts/run_vigil_bridge.py",
+        "run_vigil_bridge.py",
+    ]
+    for pattern in patterns:
+        _run(["pkill", "-TERM", "-f", pattern], check=False)
+
+
+def _wait_for_http_down(url: str, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if _get_text(url, timeout=0.5) is None:
+            return True
+        time.sleep(0.2)
+    return _get_text(url, timeout=0.5) is None
 
 
 def _post_json(url: str, data: bytes, timeout: float) -> str | None:

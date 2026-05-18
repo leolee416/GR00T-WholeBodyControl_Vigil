@@ -52,8 +52,8 @@ def main() -> None:
         "--max-move-speed",
         dest="max_move_speed",
         type=float,
-        default=1.00,
-        help="Maximum move speed exposed as safety.max_speed_mps default, in m/s.",
+        default=2.00,
+        help="Maximum move speed threshold used when action omits safety.max_speed_mps, in m/s.",
     )
     parser.add_argument(
         "--move-model-file",
@@ -161,7 +161,10 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
                 rate_hz=args.rate,
                 default_move_speed_mps=min(args.move_speed, 0.15),
                 min_move_speed_mps=min(args.min_move_speed, 0.05),
-                max_move_speed_mps=min(args.max_move_speed, 0.30),
+                max_move_speed_mps=min(args.max_move_speed, 2.00),
+                use_move_model=not args.disable_move_model,
+                move_model_file=args.move_model_file,
+                model_chunk_pause_s=args.model_chunk_pause,
                 move_settle_time_s=max(args.move_settle_time, 1.0),
                 default_rotate_rate_deg_s=min(args.rotate_rate, 20.0),
                 rotate_timeout_s=max(args.rotate_timeout, 6.0),

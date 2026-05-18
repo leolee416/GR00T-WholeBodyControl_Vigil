@@ -15,7 +15,9 @@ configuration.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import math
+from pathlib import Path
 import threading
 import time
 from typing import Any, Mapping
@@ -24,10 +26,15 @@ from gear_sonic.vigil_bridge.mujoco_adapter import (
     LOCO_IDLE,
     LOCO_SLOW_WALK,
     LOCO_WALK,
+    MoveModel,
+    MoveModelSample,
     PackedPublisher,
+    REPO_ROOT,
     StateSubscriber,
     ZMQImageSubscriber,
     facing_from_yaw,
+    interp_linear,
+    resolve_repo_path,
     wrap_pi,
 )
 from gear_sonic.vigil_bridge.primitive_executor import DryRunPrimitiveExecutor
@@ -56,7 +63,10 @@ class RealBridgeConfig:
     default_turn_degrees: float = 15.0
     default_move_speed_mps: float = 0.15
     min_move_speed_mps: float = 0.05
-    max_move_speed_mps: float = 0.30
+    max_move_speed_mps: float = 2.00
+    use_move_model: bool = True
+    move_model_file: str = "auto"
+    model_chunk_pause_s: float = 0.0
     move_settle_time_s: float = 1.0
     default_rotate_rate_deg_s: float = 20.0
     min_rotate_rate_deg_s: float = 5.0
@@ -67,6 +77,8 @@ class RealBridgeConfig:
     rotate_settle_time_s: float = 0.5
     rotate_yaw_rate_tolerance_deg: float = 10.0
     state_timeout_s: float = 3.0
+    startup_command_burst_s: float = 0.5
+    startup_command_period_s: float = 0.05
     camera_enabled: bool = True
     camera_required: bool = True
     camera_host: str = "localhost"
@@ -154,7 +166,15 @@ class RealRuntimeClient:
         self._publisher = None
 
     def send_start_control(self) -> None:
-        self._require_publisher().send_command(start=True, stop=False, planner=True)
+        publisher = self._require_publisher()
+        deadline = time.monotonic() + max(self.config.startup_command_burst_s, 0.0)
+        period_s = max(self.config.startup_command_period_s, 0.01)
+        while True:
+            publisher.send_command(start=True, stop=False, planner=True)
+            remaining_s = deadline - time.monotonic()
+            if remaining_s <= 0.0:
+                break
+            time.sleep(min(period_s, remaining_s))
         self.send_idle_burst(duration=0.5, preserve_facing=False)
 
     def send_idle_burst(self, duration: float, preserve_facing: bool = False) -> None:
@@ -407,6 +427,8 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
     config: RealBridgeConfig = field(default_factory=RealBridgeConfig)
     runtime: RealRuntimeClient | None = None
     _motion_lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    _move_model: MoveModel | None = field(default=None, init=False)
+    _move_model_error: str | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.runtime_mode = self.config.runtime_mode
@@ -416,6 +438,8 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
         self.default_rate_deg_s = self.config.default_rotate_rate_deg_s
         if self.runtime is None:
             self.runtime = RealRuntimeClient(self.config)
+        if self.config.use_move_model:
+            self._move_model, self._move_model_error = self._load_move_model(self.config.move_model_file)
 
     def start(self) -> RuntimeHealth:
         assert self.runtime is not None
@@ -451,15 +475,16 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
                 )
             try:
                 distance = self._float(distance_m, "distance_m")
-                speed = self._clamped_speed(speed_mps)
+                max_speed = self._clamped_max_speed(speed_mps)
                 timeout = self._optional_positive_float(timeout_s, "timeout_s")
-                command_duration_s = abs(distance) / speed if speed > 0.0 else 0.0
-                if timeout is not None and command_duration_s + self.config.move_settle_time_s > timeout:
+                commands = self._move_commands(distance, max_speed)
+                command_duration_s = sum(float(command["duration_s"]) for command in commands)
+                if timeout is not None and command_duration_s > timeout:
                     return self._real_failure(
                         "move command duration exceeds timeout_s",
                         {
                             "distance_m": distance,
-                            "speed_mps": speed,
+                            "max_speed_mps": max_speed,
                             "estimated_duration_s": command_duration_s,
                             "timeout_s": timeout,
                         },
@@ -469,17 +494,18 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
                 if not health.get("ok", False):
                     return self._real_failure(str(health.get("error_message")), dict(health.get("telemetry", {})))
                 assert self.runtime is not None
-                telemetry = self.runtime.move(distance, speed, command_duration_s)
+                telemetry = self._run_move_commands(commands)
             except Exception as exc:  # noqa: BLE001 - fail closed for hardware mode.
                 halt_health = self.halt()
                 return self._real_failure(str(exc), {"motion": "move", "halt_called": True, "halt_health": halt_health})
 
             return self._real_success(
                 executed_arguments={
-                    "primitive": "move_open_loop",
+                    "primitive": "move_model",
                     "distance_m": distance,
-                    "speed_mps": speed,
+                    "max_speed_mps": max_speed,
                     "timeout_s": timeout,
+                    "move_model_file": str(self._move_model.path) if self._move_model is not None else None,
                 },
                 telemetry=telemetry,
             )
@@ -533,7 +559,18 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
 
     def get_health(self, sensor_connected: bool = True) -> RuntimeHealth:
         assert self.runtime is not None
-        return self.runtime.get_health()
+        health = self.runtime.get_health()
+        telemetry = dict(health.get("telemetry", {}))
+        telemetry.update(
+            {
+                "move_model_enabled": self.config.use_move_model,
+                "move_model_loaded": self._move_model is not None,
+                "move_model_path": str(self._move_model.path) if self._move_model is not None else None,
+                "move_model_error": self._move_model_error,
+            }
+        )
+        health["telemetry"] = telemetry
+        return health
 
     def _real_success(self, executed_arguments: JSONDict, telemetry: JSONDict) -> ExecuteActionResponse:
         command_id = self._next_command_id()
@@ -612,9 +649,174 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
         speed = self._positive_float_or_default(value, self.config.default_move_speed_mps, "speed_mps")
         return min(max(speed, self.config.min_move_speed_mps), self.config.max_move_speed_mps)
 
+    def _clamped_max_speed(self, value: float | None) -> float:
+        speed = self._positive_float_or_default(value, self.config.max_move_speed_mps, "max_speed_mps")
+        return min(max(speed, self.config.min_move_speed_mps), self.config.max_move_speed_mps)
+
     def _clamped_rotate_rate(self, value: float | None) -> float:
         rate = self._positive_float_or_default(value, self.config.default_rotate_rate_deg_s, "rate_deg_s")
         return min(max(rate, self.config.min_rotate_rate_deg_s), self.config.max_rotate_rate_deg_s)
+
+    def _move_commands(self, distance_m: float, max_speed_mps: float) -> list[JSONDict]:
+        if not self.config.use_move_model:
+            duration = abs(distance_m) / max_speed_mps if max_speed_mps > 0.0 else 0.0
+            return [
+                {
+                    "distance_m": distance_m,
+                    "speed_mps": max_speed_mps,
+                    "duration_s": duration,
+                    "source": "open_loop",
+                }
+            ]
+        if self._move_model is None:
+            detail = f": {self._move_model_error}" if self._move_model_error else ""
+            raise RuntimeError(f"move_model is enabled but no move model is loaded{detail}")
+
+        return [
+            self._predict_model_command(chunk, max_speed_mps)
+            for chunk in self._split_model_move(distance_m)
+        ]
+
+    def _run_move_commands(self, commands: list[JSONDict]) -> JSONDict:
+        assert self.runtime is not None
+        if not commands:
+            return {
+                "motion": "move",
+                "completion": {
+                    "motion_commanded": False,
+                    "completion_source": "move_model",
+                    "capture_timing": "after_completion",
+                    "settled": True,
+                    "duration_s": 0.0,
+                    "command_duration_s": 0.0,
+                },
+                "move_model": self._move_model_telemetry(commands),
+            }
+
+        chunk_telemetry: list[JSONDict] = []
+        for index, command in enumerate(commands, start=1):
+            telemetry = self.runtime.move(
+                float(command["distance_m"]),
+                float(command["speed_mps"]),
+                float(command["duration_s"]),
+            )
+            chunk_telemetry.append(telemetry)
+            if index < len(commands) and self.config.model_chunk_pause_s > 0.0:
+                time.sleep(self.config.model_chunk_pause_s)
+
+        if len(commands) == 1:
+            response = dict(chunk_telemetry[0])
+            response["move_model"] = self._move_model_telemetry(commands)
+            return response
+
+        command_duration_s = sum(float(command["duration_s"]) for command in commands)
+        completion_duration_s = 0.0
+        settled = True
+        capture_timing = "after_settle"
+        for telemetry in chunk_telemetry:
+            completion = telemetry.get("completion")
+            if isinstance(completion, Mapping):
+                completion_duration_s += float(completion.get("duration_s", 0.0))
+                settled = settled and bool(completion.get("settled", True))
+                capture_timing = str(completion.get("capture_timing", capture_timing))
+
+        return {
+            "motion": "move",
+            "completion": {
+                "motion_commanded": True,
+                "completion_source": "move_model_chunks",
+                "capture_timing": capture_timing,
+                "settled": settled,
+                "duration_s": completion_duration_s,
+                "command_duration_s": command_duration_s,
+                "chunk_count": len(commands),
+            },
+            "move_model": self._move_model_telemetry(commands),
+        }
+
+    def _move_model_telemetry(self, commands: list[JSONDict]) -> JSONDict:
+        return {
+            "enabled": self.config.use_move_model,
+            "model_file": str(self._move_model.path) if self._move_model is not None else None,
+            "chunk_count": len(commands),
+            "chunks": commands,
+        }
+
+    def _split_model_move(self, distance_m: float) -> list[float]:
+        if abs(distance_m) < 1e-9:
+            return []
+        if self._move_model is None:
+            return [distance_m]
+        sign = 1.0 if distance_m > 0.0 else -1.0
+        limit = (
+            self._move_model.max_forward_magnitude
+            if sign > 0.0
+            else self._move_model.max_backward_magnitude
+        )
+        if limit <= 1e-9:
+            return [distance_m]
+
+        remaining = abs(distance_m)
+        chunks: list[float] = []
+        while remaining > limit + 1e-9:
+            chunks.append(sign * limit)
+            remaining -= limit
+        if remaining > 1e-9:
+            chunks.append(sign * remaining)
+        return chunks
+
+    def _predict_model_command(self, distance_m: float, max_speed_mps: float) -> JSONDict:
+        if self._move_model is None:
+            raise RuntimeError("No move model loaded.")
+        samples = self._move_model.forward if distance_m >= 0.0 else self._move_model.backward
+        target = abs(distance_m)
+        speed = interp_linear(target, [(sample.magnitude_abs, sample.rate) for sample in samples])
+        execute_time = interp_linear(
+            target,
+            [(sample.magnitude_abs, sample.execute_time) for sample in samples],
+        )
+        clamped_speed = min(max(abs(speed), self.config.min_move_speed_mps), max_speed_mps)
+        return {
+            "distance_m": distance_m,
+            "speed_mps": clamped_speed,
+            "duration_s": max(execute_time, 0.0),
+            "model_speed_mps": speed,
+            "model_execute_time_s": execute_time,
+            "source": "move_model",
+        }
+
+    def _load_move_model(self, model_file: str) -> tuple[MoveModel | None, str | None]:
+        try:
+            path = self._resolve_move_model_path(model_file)
+            if path is None:
+                return None, "no JSON model found under outputs/vigil_move_models"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            models = payload["models"]
+            forward = self._parse_move_model_samples(models["forward"])
+            backward = self._parse_move_model_samples(models["backward"])
+            if not forward or not backward:
+                raise ValueError("forward/backward samples are required")
+            return MoveModel(path=path, forward=forward, backward=backward), None
+        except Exception as exc:  # noqa: BLE001 - report as bridge validation error.
+            return None, str(exc)
+
+    def _resolve_move_model_path(self, model_file: str) -> Path | None:
+        if model_file.strip().lower() == "auto":
+            candidates = sorted((REPO_ROOT / "outputs" / "vigil_move_models").glob("vigil_move_model_*.json"))
+            return candidates[-1] if candidates else None
+        return resolve_repo_path(model_file)
+
+    @staticmethod
+    def _parse_move_model_samples(rows: list[dict[str, Any]]) -> list[MoveModelSample]:
+        samples = [
+            MoveModelSample(
+                magnitude_abs=float(row["magnitude_abs"]),
+                rate=abs(float(row["rate"])),
+                execute_time=float(row["execute_time"]),
+            )
+            for row in rows
+        ]
+        return sorted(samples, key=lambda row: row.magnitude_abs)
 
 
 @dataclass

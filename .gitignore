@@ -198,6 +198,8 @@ uv.lock
 .venv_sim/
 .venv_teleop/
 .venv_data_collection/
+.venv-pytest/
+.pytest-deps/
 .venv_camera/
 .venv_inference/
 
