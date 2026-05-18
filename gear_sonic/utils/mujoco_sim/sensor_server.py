@@ -73,11 +73,31 @@ class SensorServer:
 class ImageUtils:
     @staticmethod
     def encode_image(image: np.ndarray) -> str:
-        _, color_buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        image_for_cv2 = ImageUtils._rgb_to_cv2_bgr(image)
+        _, color_buffer = cv2.imencode(".jpg", image_for_cv2, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
         return base64.b64encode(color_buffer).decode("utf-8")
 
     @staticmethod
     def decode_image(image: str) -> np.ndarray:
         color_data = base64.b64decode(image)
         color_array = np.frombuffer(color_data, dtype=np.uint8)
-        return cv2.imdecode(color_array, cv2.IMREAD_COLOR)
+        decoded = cv2.imdecode(color_array, cv2.IMREAD_COLOR)
+        return ImageUtils._cv2_bgr_to_rgb(decoded)
+
+    @staticmethod
+    def _rgb_to_cv2_bgr(image: np.ndarray) -> np.ndarray:
+        if image.ndim == 3 and image.shape[2] == 3:
+            return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        if image.ndim == 3 and image.shape[2] == 4:
+            return cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+        return image
+
+    @staticmethod
+    def _cv2_bgr_to_rgb(image: np.ndarray) -> np.ndarray:
+        if image is None:
+            return image
+        if image.ndim == 3 and image.shape[2] == 3:
+            return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if image.ndim == 3 and image.shape[2] == 4:
+            return cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+        return image
