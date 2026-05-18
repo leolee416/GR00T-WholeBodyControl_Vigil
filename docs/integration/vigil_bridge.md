@@ -42,7 +42,7 @@ operational points:
 - `navigate.forward` and `navigate.backward` use calibrated `move_model` by
   default when a model JSON is available.
 - `--max-speed-mps` / `--max-move-speed` sets the startup speed ceiling; default
-  is `1.0` m/s.
+  is `2.0` m/s when launched through `run_vigil_bridge.py`.
 - `POST /halt` sends idle commands and may send deploy `stop=True` when the
   bridge starts with `--send-stop-on-halt`.
 - `POST /close` releases bridge-side resources; it is not a policy/deploy stop
@@ -53,10 +53,20 @@ operational points:
 
 - `--backend real` connects to already-running real deploy transports; it does
   not start deploy or hardware.
+- The robot-side `./vigil_bridge start` helper is a tmux launcher around Docker,
+  deploy, and the HTTP bridge. This launcher starts the processes; the HTTP
+  bridge service itself still only manages bridge-side runtime sockets.
 - Real motion remains disabled unless the bridge is started with
   `--enable-real-motion`.
-- Real mode uses conservative motion defaults and fails closed if required
-  state/camera/command readiness checks are missing.
+- Real `navigate.forward` and `navigate.backward` use calibrated `move_model`
+  by default when a model JSON is available. If Vigil omits
+  `safety.max_speed_mps`, the startup `--max-speed-mps` value is used as the
+  speed ceiling.
+- Real mode fails closed if required state/camera/command readiness checks are
+  missing.
+- Camera observations are returned as JPEG base64 payloads with explicit
+  `encoding`/`data` fields. RGB images are converted at the OpenCV boundary so
+  red/blue channels are preserved.
 - `POST /halt` is the safety stop interface; `POST /close` only releases bridge
   resources unless halt/stop behavior is explicitly configured.
 

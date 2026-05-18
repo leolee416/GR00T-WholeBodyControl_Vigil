@@ -21,6 +21,10 @@ This index lists the Codex-facing documentation for this repository.
 - `docs/integration/vigil_bridge.md`  
   Vigil bridge architecture, runtime modes, and adapter design.
 
+- `docs/vigil_bridge_integration.md`
+  Detailed bridge HTTP protocol, launch examples, action/observation payloads,
+  and runtime safety notes.
+
 ## Workflows
 
 - `docs/workflows/codex_workflows.md`  

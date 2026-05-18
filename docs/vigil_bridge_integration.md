@@ -235,33 +235,49 @@ The adapter uses:
 The bridge still does not start deploy, does not start the robot, does not call
 policy inference directly, and does not modify WBC internals. Start and verify
 the real deploy process separately, then start the bridge with `--backend real`.
+For robot-side bring-up, the repository also provides `./vigil_bridge start`,
+which is a tmux launcher around Docker, deploy, and the HTTP bridge. That helper
+starts processes; the HTTP bridge service itself remains a runtime adapter.
 
 Real motion is disabled by default. The bridge rejects motion commands until it
 is started with `--enable-real-motion`. This is intentional: selecting
 `--backend real` is not enough to move hardware.
 
-Example real setup:
+Example one-command robot-side setup:
 
 ```bash
-# terminal 1: C++ deployment on/for the real robot
-cd gear_sonic_deploy
-source scripts/setup_env.sh
-./deploy.sh --input-type zmq_manager --output-type all real
+cd /home/unitree/GR00T-WholeBodyControl_Vigil
+./vigil_bridge start --max-speed-mps 2 --camera-required --attach
+```
 
-# terminal 2: Vigil HTTP bridge backed by real-runtime transports
-cd /home/lizj/code/GR00T-WholeBodyControl
+Example manual real setup:
+
+```bash
+# terminal 1: deployment inside the ROS2 Docker container
+cd /workspace/g1_deploy
+source scripts/setup_env.sh
+printf '\n' | ./deploy.sh real \
+  --input-type zmq_manager \
+  --output-type zmq \
+  --zmq-host 127.0.0.1
+
+# terminal 2: Vigil HTTP bridge on the robot host
+cd /home/unitree/GR00T-WholeBodyControl_Vigil
 python gear_sonic_deploy/scripts/run_vigil_bridge.py \
   --backend real \
   --runtime-mode real \
-  --host 127.0.0.1 \
+  --host 0.0.0.0 \
   --port 8765 \
+  --command-bind-host 127.0.0.1 \
   --command-port 5556 \
-  --state-host localhost \
+  --state-host 127.0.0.1 \
   --state-port 5557 \
   --real-camera \
   --camera-host localhost \
   --camera-port 5555 \
-  --enable-real-motion
+  --enable-real-motion \
+  --auto-start-control \
+  --max-speed-mps 2
 ```
 
 If no real camera stream is available during early bring-up, use
@@ -272,7 +288,9 @@ Real mode uses conservative defaults:
 
 - default move distance: `0.10` m
 - default move speed: `0.15` m/s
-- startup speed ceiling: `0.30` m/s
+- startup speed ceiling: `2.00` m/s
+- calibrated move model: enabled by default; use `--disable-move-model` to fall
+  back to direct duration-based open-loop move commands
 - default turn angle: `15` degrees
 - default turn rate ceiling: `30` deg/s
 
@@ -422,7 +440,10 @@ The bridge should provide the latest observation and state metadata:
   "observation_id": "obs_0003",
   "runtime_mode": "mujoco",
   "images": {
-    "ego_view": "<jpeg-bytes-or-transport-specific-payload>"
+    "ego_view": {
+      "encoding": "jpeg-base64",
+      "data": "<base64 jpeg>"
+    }
   },
   "camera_timestamps": {},
   "robot_state": {},
@@ -435,6 +456,9 @@ The bridge should provide the latest observation and state metadata:
 ```
 
 Vigil decides how this becomes a Vigil `Observation`.
+The image payload is a transport JPEG. Camera publishers keep image arrays in
+RGB order internally and convert to OpenCV BGR only at JPEG encode/decode
+boundaries so red/blue channels are preserved.
 
 ## Initial Primitive Mapping
 
@@ -452,11 +476,11 @@ Unsupported interactions should fail clearly rather than silently doing
 nothing.
 
 `navigate.forward` and `navigate.backward` use calibrated `move_model` by
-default in MuJoCo bridge mode. The bridge loads the latest
+default in MuJoCo and real bridge modes. The bridge loads the latest
 `outputs/vigil_move_models/vigil_move_model_*.json` file unless
 `--move-model-file PATH` is provided. `safety.max_speed_mps` is treated as a
 speed ceiling for the model-predicted command; if Vigil omits it, the bridge
-uses the startup default `--max-speed-mps 1.0`.
+uses the startup default `--max-speed-mps 2.0`.
 
 Example MuJoCo bridge startup:
 
@@ -465,7 +489,7 @@ python gear_sonic_deploy/scripts/run_vigil_bridge.py \
   --backend mujoco \
   --runtime-mode mujoco \
   --move-model-file auto \
-  --max-speed-mps 1.0
+  --max-speed-mps 2
 ```
 
 ## Real Robot Safety
