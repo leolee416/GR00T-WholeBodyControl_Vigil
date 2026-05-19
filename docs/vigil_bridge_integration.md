@@ -108,7 +108,7 @@ The public façade handshake currently follows `vigil_groot_bridge_v1`:
       "navigate.turn_left",
       "navigate.turn_right"
     ],
-    "observation": ["rgb", "robot_state"],
+    "observation": ["rgb", "depth", "robot_state"],
     "oracle_source": "none"
   },
   "bridge": {
