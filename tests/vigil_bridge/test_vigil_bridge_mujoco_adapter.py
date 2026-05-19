@@ -36,8 +36,8 @@ class FakeMujocoRuntime:
     )
     camera_payload: dict[str, Any] = field(
         default_factory=lambda: {
-            "images": {"ego_view": "ZmFrZS1qcGVn"},
-            "timestamps": {"ego_view": 123.0},
+            "images": {"ego_view": "ZmFrZS1qcGVn", "ego_view_depth": "ZmFrZS1kZXB0aA=="},
+            "timestamps": {"ego_view": 123.0, "ego_view_depth": 123.0},
         }
     )
 
@@ -252,7 +252,12 @@ def test_mujoco_sensor_provider_normalizes_camera_payload() -> None:
         "encoding": "jpeg-base64",
         "data": "ZmFrZS1qcGVn",
     }
+    assert observation["images"]["ego_view_depth"] == {
+        "encoding": "jpeg-base64",
+        "data": "ZmFrZS1kZXB0aA==",
+    }
     assert observation["camera_timestamps"]["ego_view"] == 123.0
+    assert observation["camera_timestamps"]["ego_view_depth"] == 123.0
     assert observation["robot_state"]["source"] == "fake_mujoco"
     assert observation["perception"]["source"] == "none"
 

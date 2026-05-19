@@ -41,8 +41,8 @@ class FakeRealRuntime:
     )
     camera_payload: dict[str, Any] | None = field(
         default_factory=lambda: {
-            "images": {"ego_view": "ZmFrZS1yZWFsLWpwZWc="},
-            "timestamps": {"ego_view": 456.0},
+            "images": {"ego_view": "ZmFrZS1yZWFsLWpwZWc=", "ego_view_depth": "ZmFrZS1yZWFsLWRlcHRo"},
+            "timestamps": {"ego_view": 456.0, "ego_view_depth": 456.0},
         }
     )
 
@@ -263,7 +263,12 @@ def test_real_sensor_provider_normalizes_camera_payload() -> None:
         "encoding": "jpeg-base64",
         "data": "ZmFrZS1yZWFsLWpwZWc=",
     }
+    assert observation["images"]["ego_view_depth"] == {
+        "encoding": "jpeg-base64",
+        "data": "ZmFrZS1yZWFsLWRlcHRo",
+    }
     assert observation["camera_timestamps"]["ego_view"] == 456.0
+    assert observation["camera_timestamps"]["ego_view_depth"] == 456.0
     assert observation["robot_state"]["source"] == "fake_real"
     assert observation["perception"]["source"] == "none"
 

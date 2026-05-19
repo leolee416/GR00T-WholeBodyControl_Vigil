@@ -24,7 +24,7 @@ def _handshake_request() -> dict:
                 "navigate.turn_left",
                 "navigate.turn_right",
             ],
-            "observation": ["rgb", "robot_state"],
+            "observation": ["rgb", "depth", "robot_state"],
             "oracle_source": "none",
         },
     }
@@ -80,6 +80,7 @@ def test_http_handshake_endpoint(http_server_url: str) -> None:
         "navigate.turn_left",
         "navigate.turn_right",
     ]
+    assert response["capabilities"]["observation"] == ["rgb", "depth", "robot_state"]
     assert response["bridge"] == {
         "name": "gear_sonic_vigil_bridge",
         "version": "dry_run_phase1",

@@ -17,7 +17,7 @@ SUPPORTED_ACTIONS = [
     "navigate.turn_left",
     "navigate.turn_right",
 ]
-SUPPORTED_OBSERVATIONS = ["rgb", "robot_state"]
+SUPPORTED_OBSERVATIONS = ["rgb", "depth", "robot_state"]
 ORACLE_SOURCE = "none"
 
 

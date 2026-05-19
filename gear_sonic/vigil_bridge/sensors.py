@@ -28,9 +28,18 @@ class FakeSensorProvider:
                     "width": 1,
                     "height": 1,
                     "data": "AAAA",
+                },
+                "ego_view_depth": {
+                    "encoding": "fake-depth-base64",
+                    "width": 1,
+                    "height": 1,
+                    "data": "AAAA",
                 }
             },
-            "camera_timestamps": {"ego_view": float(self._observation_index)},
+            "camera_timestamps": {
+                "ego_view": float(self._observation_index),
+                "ego_view_depth": float(self._observation_index),
+            },
             "robot_state": robot_state,
             "telemetry": {
                 "sensor_provider": "fake",

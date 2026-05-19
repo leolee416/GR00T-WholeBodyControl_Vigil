@@ -19,7 +19,7 @@ def _handshake_request() -> dict:
                 "navigate.turn_left",
                 "navigate.turn_right",
             ],
-            "observation": ["rgb", "robot_state"],
+            "observation": ["rgb", "depth", "robot_state"],
             "oracle_source": "none",
         },
     }
@@ -54,7 +54,7 @@ def test_handshake_returns_vigil_protocol_fields() -> None:
                 "navigate.turn_left",
                 "navigate.turn_right",
             ],
-            "observation": ["rgb", "robot_state"],
+            "observation": ["rgb", "depth", "robot_state"],
             "oracle_source": "none",
         },
         "bridge": {
@@ -114,6 +114,14 @@ def test_unsupported_action_returns_structured_failure() -> None:
         "settled": False,
         "duration_s": 0.0,
     }
+
+
+def test_dry_run_observation_includes_fake_rgb_and_depth() -> None:
+    observation = VigilBridgeService().get_observation({"runtime_mode": "dry_run"})
+
+    assert observation["images"]["ego_view"]["encoding"] == "fake-rgb-base64"
+    assert observation["images"]["ego_view_depth"]["encoding"] == "fake-depth-base64"
+    assert observation["camera_timestamps"]["ego_view"] == observation["camera_timestamps"]["ego_view_depth"]
 
 
 def test_vigil_bridge_package_does_not_import_vigil() -> None:
