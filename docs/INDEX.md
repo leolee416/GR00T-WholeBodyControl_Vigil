@@ -21,6 +21,9 @@ This index lists the Codex-facing documentation for this repository.
 - `docs/integration/vigil_bridge.md`  
   Vigil bridge architecture, runtime modes, and adapter design.
 
+- `docs/integration/vigil_bridge_quickstart.md`  
+  Short operator quickstart for SSH, launcher startup, and curl smoke tests.
+
 - `docs/integration/vigil_bridge_interface.md`  
   Current bridge protocol, capabilities, message shapes, and extension table.
 
