@@ -60,6 +60,8 @@ python gear_sonic_deploy/scripts/run_vigil_bridge.py --host 127.0.0.1 --port 876
 | `POST` | `/robot_state` | optional object | `RobotStateResponse` | 获取 robot_state |
 | `POST` | `/get_robot_state` | optional object | `RobotStateResponse` | `/robot_state` alias |
 | `POST` | `/halt` | optional object | `RuntimeHealth` | 安全停止/idle 接口 |
+| `POST` | `/pause` | optional object | `RuntimeHealth` | 保留 policy/deploy；停止推理并让真机保持 `default_angles` |
+| `POST` | `/resume` | optional object | `RuntimeHealth` | 从 paused runtime 重新接入 policy |
 | `POST` | `/close` | optional object | close response | 释放 bridge 资源；不要假设会停止 deploy/policy |
 
 协议常量见 `gear_sonic/vigil_bridge/protocol.py`：
@@ -138,6 +140,24 @@ Response stable fields:
 | `telemetry.completion.settled` | bool | 是否认为动作后已稳定 |
 
 `ok=true` 只表示 bridge/runtime primitive 成功，不表示 benchmark task success。
+
+### Pause / Resume
+
+`/pause` 是保活型暂停，不等同于 `/halt` 或 `/close`：
+
+- HTTP bridge、policy process、deploy process、Docker container 和 tmux session 保持运行。
+- real deploy 收到 ZMQ command `pause=true` 后关闭 planner，清空运动状态，不再执行 policy inference。
+- 真机以 INIT 同样的默认姿态窗口回到并保持 `default_angles`，用于人工 reset 场景和机器人。
+
+`/resume` 会重新发送正常 start/planner command。robot-side launcher 也支持复用：
+
+```bash
+./vigil_bridge pause
+# reset scene / robot
+./vigil_bridge start
+```
+
+如果 `./vigil_bridge start` 发现既有 tmux session，会请求 `/resume`，不会重新部署 policy。
 
 ### Observation
 

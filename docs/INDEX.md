@@ -18,6 +18,9 @@ This index lists the Codex-facing documentation for this repository.
 
 ## Integration
 
+- `RUNTIME_BRIDGE_OVERVIEW.md`
+  Short runtime bridge overview for external agents/clients and operator lifecycle.
+
 - `docs/integration/vigil_bridge.md`  
   Vigil bridge architecture, runtime modes, and adapter design.
 

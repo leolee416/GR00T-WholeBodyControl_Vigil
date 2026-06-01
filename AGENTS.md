@@ -81,6 +81,10 @@ For bridge shutdown, treat `/halt` as the runtime safety interface. Do not assum
 `/close` stops policy/deploy execution unless the bridge explicitly routes close
 through halt/stop behavior.
 
+For bridge pause/resume, pause must keep deploy/policy alive, stop policy
+inference, and hold a safe default pose. Resume must re-enter the normal
+pre-control preparation before policy control.
+
 ## Runtime / Verification
 
 For bridge code, prefer lightweight checks first:

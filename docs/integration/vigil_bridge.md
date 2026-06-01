@@ -69,6 +69,11 @@ operational points:
   red/blue channels are preserved.
 - `POST /halt` is the safety stop interface; `POST /close` only releases bridge
   resources unless halt/stop behavior is explicitly configured.
+- `POST /pause` keeps the bridge, policy, deploy, container, and tmux session
+  alive while real deploy stops policy inference and returns to `default_angles`.
+- `POST /resume` sends the normal start command again. When the robot-side
+  launcher already has a tmux session, `./vigil_bridge start` requests resume
+  instead of redeploying policy.
 
 ## Recommended Locations
 
