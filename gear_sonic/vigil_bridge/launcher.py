@@ -37,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "start":
         return start(args)
+    if args.command == "pause":
+        return pause(args)
+    if args.command == "resume":
+        return resume(args)
     if args.command == "stop":
         return stop(args)
     if args.command == "status":
@@ -77,6 +81,7 @@ def _build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--move-model-file", default="auto", help="Move model JSON path, or 'auto' for latest output.")
     start_parser.add_argument("--disable-move-model", action="store_true", help="Use direct open-loop move instead of move_model.")
     start_parser.add_argument("--model-chunk-pause", type=float, default=0.0, help="Pause between move_model chunks.")
+    start_parser.add_argument("--pause-settle-time", type=float, default=3.2, help="Seconds pause waits for default-pose settle.")
     start_parser.add_argument("--camera-host", default="localhost", help="Real camera ZMQ host.")
     start_parser.add_argument("--camera-port", type=int, default=5555, help="Real camera ZMQ port.")
     start_parser.add_argument(
@@ -119,6 +124,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Do not stop the Vigil camera service or restore the previous camera service.",
     )
 
+    pause_parser = subparsers.add_parser(
+        "pause",
+        help="Pause deploy in default pose while keeping policy, bridge, container, and tmux alive.",
+    )
+    pause_parser.add_argument("--bridge-host", default="127.0.0.1", help="Local bridge HTTP host for pause.")
+    pause_parser.add_argument("--bridge-port", type=int, default=8765, help="Local bridge HTTP port for pause.")
+
+    resume_parser = subparsers.add_parser(
+        "resume",
+        help="Resume a paused bridge/deploy session without redeploying policy.",
+    )
+    resume_parser.add_argument("--bridge-host", default="127.0.0.1", help="Local bridge HTTP host for resume.")
+    resume_parser.add_argument("--bridge-port", type=int, default=8765, help="Local bridge HTTP port for resume.")
+
     status_parser = subparsers.add_parser("status", help="Show tmux, Docker, and bridge status.")
     status_parser.add_argument("--bridge-host", default="127.0.0.1", help="Local bridge HTTP host for health.")
     status_parser.add_argument("--bridge-port", type=int, default=8765, help="Local bridge HTTP port for health.")
@@ -140,12 +159,12 @@ def _build_parser() -> argparse.ArgumentParser:
 def start(args: argparse.Namespace) -> int:
     _require_command("tmux")
     _require_command("docker")
-    _validate_start_inputs(args)
 
     if _tmux_session_exists(args.session):
-        print(f"tmux session already exists: {args.session}", file=sys.stderr)
-        print(f"Use './vigil_bridge attach' or './vigil_bridge stop' first.", file=sys.stderr)
-        return 1
+        print(f"tmux session already exists: {args.session}; requesting bridge resume instead of redeploying.")
+        return resume(args)
+
+    _validate_start_inputs(args)
     _stop_stale_bridge_service(args.bridge_port)
 
     runtime_dir = _runtime_dir(args.session)
@@ -213,6 +232,29 @@ def stop(args: argparse.Namespace) -> int:
         _restore_camera_service(args.session)
 
     print("Stopped robot-side Vigil bridge launcher.")
+    return 0
+
+
+def pause(args: argparse.Namespace) -> int:
+    bridge_base_url = _bridge_base_url(args)
+    response = _post_json(f"{bridge_base_url}/pause", b'{"runtime_mode":"real"}', timeout=10.0)
+    if response is None:
+        print(f"Could not reach bridge pause endpoint at {bridge_base_url}/pause", file=sys.stderr)
+        return 1
+    print(f"Paused robot-side policy session: {response}")
+    print("tmux/container/policy/bridge remain running; use './vigil_bridge start' or './vigil_bridge resume' to reconnect.")
+    return 0
+
+
+def resume(args: argparse.Namespace) -> int:
+    bridge_base_url = _bridge_base_url(args)
+    response = _post_json(f"{bridge_base_url}/resume", b'{"runtime_mode":"real"}', timeout=30.0)
+    if response is None:
+        print(f"Could not reach bridge resume endpoint at {bridge_base_url}/resume", file=sys.stderr)
+        if _tmux_session_exists(args.session):
+            print(f"tmux session exists: {args.session}. Check './vigil_bridge status' or './vigil_bridge attach'.", file=sys.stderr)
+        return 1
+    print(f"Resumed robot-side policy session: {response}")
     return 0
 
 
@@ -325,6 +367,8 @@ def _bridge_script(args: argparse.Namespace, policy_log: Path, bridge_log: Path)
         args.move_model_file,
         "--model-chunk-pause",
         str(args.model_chunk_pause),
+        "--pause-settle-time",
+        str(args.pause_settle_time),
         "--real-camera",
         "--camera-host",
         args.camera_host,
@@ -420,6 +464,8 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         raise SystemExit("--max-speed-mps must be <= 2.0 for real-robot mode")
     if args.model_chunk_pause < 0.0:
         raise SystemExit("--model-chunk-pause must be >= 0")
+    if args.pause_settle_time < 0.0:
+        raise SystemExit("--pause-settle-time must be >= 0")
     if args.camera_port <= 0:
         raise SystemExit("--camera-port must be positive")
 
@@ -435,6 +481,13 @@ def _runtime_dir(session: str) -> Path:
 
 def _camera_state_path(session: str) -> Path:
     return _runtime_dir(session) / "camera_service_state.json"
+
+
+def _bridge_base_url(args: argparse.Namespace) -> str:
+    host = str(getattr(args, "bridge_host", "127.0.0.1"))
+    if host in {"0.0.0.0", "::", ""}:
+        host = "127.0.0.1"
+    return f"http://{host}:{args.bridge_port}"
 
 
 def _require_command(command: str) -> None:

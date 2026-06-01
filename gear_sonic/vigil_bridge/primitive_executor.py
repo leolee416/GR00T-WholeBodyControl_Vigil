@@ -31,6 +31,16 @@ class DryRunPrimitiveExecutor:
         self._last_telemetry = {"event": "halt", "dry_run": True}
         return self.get_health()
 
+    def pause(self) -> RuntimeHealth:
+        self.started = False
+        self._last_telemetry = {"event": "pause", "dry_run": True, "paused": True}
+        return self.get_health()
+
+    def resume(self) -> RuntimeHealth:
+        self.started = True
+        self._last_telemetry = {"event": "resume", "dry_run": True}
+        return self.get_health()
+
     def move(
         self,
         distance_m: float,

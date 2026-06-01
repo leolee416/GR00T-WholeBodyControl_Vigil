@@ -67,6 +67,7 @@ def main() -> None:
     )
     parser.add_argument("--model-chunk-pause", type=float, default=0.0, help="Pause between move_model chunks.")
     parser.add_argument("--move-settle-time", type=float, default=0.8, help="Idle settle time after move.")
+    parser.add_argument("--pause-settle-time", type=float, default=3.2, help="Seconds to wait after pause command.")
     parser.add_argument("--rotate-rate", type=float, default=35.0, help="Default rotate command rate in deg/s.")
     parser.add_argument("--rotate-timeout", type=float, default=4.0, help="Minimum rotate timeout in seconds.")
     parser.add_argument("--rotate-extra-time", type=float, default=8.0, help="Extra rotate correction time.")
@@ -166,6 +167,7 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
                 move_model_file=args.move_model_file,
                 model_chunk_pause_s=args.model_chunk_pause,
                 move_settle_time_s=max(args.move_settle_time, 1.0),
+                pause_settle_time_s=max(args.pause_settle_time, 0.0),
                 default_rotate_rate_deg_s=min(args.rotate_rate, 20.0),
                 rotate_timeout_s=max(args.rotate_timeout, 6.0),
                 rotate_extra_time_s=max(args.rotate_extra_time, 8.0),

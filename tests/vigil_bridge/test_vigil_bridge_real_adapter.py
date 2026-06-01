@@ -27,6 +27,7 @@ class FakeRealRuntime:
     )
     started: bool = False
     halted: bool = False
+    paused: bool = False
     closed: bool = False
     fail_move: bool = False
     moves: list[dict[str, float]] = field(default_factory=list)
@@ -52,11 +53,23 @@ class FakeRealRuntime:
 
     def halt(self) -> dict:
         self.halted = True
+        self.paused = False
         self.started = False
+        return self.get_health()
+
+    def pause(self) -> dict:
+        self.paused = True
+        self.started = False
+        return self.get_health()
+
+    def resume(self) -> dict:
+        self.paused = False
+        self.started = True
         return self.get_health()
 
     def close(self) -> None:
         self.closed = True
+        self.paused = False
         self.started = False
 
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> dict:
@@ -185,6 +198,21 @@ def test_real_backend_rejects_motion_by_default() -> None:
     assert runtime.moves == []
 
 
+def test_real_service_pause_and_resume_keep_runtime_open() -> None:
+    runtime = FakeRealRuntime()
+    service = _service(runtime)
+
+    pause_response = service.pause()
+    assert pause_response["ok"] is True
+    assert runtime.paused is True
+    assert runtime.closed is False
+
+    resume_response = service.resume()
+    assert runtime.paused is False
+    assert runtime.closed is False
+    assert resume_response["executor_started"] is True
+
+
 def test_real_executor_maps_forward_to_runtime_move_model(tmp_path: Path) -> None:
     model_path = _write_move_model(tmp_path)
     runtime = FakeRealRuntime(
@@ -296,8 +324,8 @@ def test_real_auto_start_sends_command_before_waiting_for_state(monkeypatch: pyt
         def __init__(self, bind_host: str, port: int, verbose: bool = False) -> None:
             events.append(f"publisher:{bind_host}:{port}")
 
-        def send_command(self, start: bool, stop: bool, planner: bool = True) -> None:
-            events.append(f"command:{int(start)}:{int(stop)}:{int(planner)}")
+        def send_command(self, start: bool, stop: bool, planner: bool = True, pause: bool = False) -> None:
+            events.append(f"command:{int(start)}:{int(stop)}:{int(planner)}:{int(pause)}")
 
         def send_planner(
             self,
@@ -324,7 +352,7 @@ def test_real_auto_start_sends_command_before_waiting_for_state(monkeypatch: pyt
 
         def wait_for_state(self, timeout: float) -> Any:
             events.append("wait_for_state")
-            assert "command:1:0:1" in events
+            assert "command:1:0:1:0" in events
 
             @dataclass
             class State:
@@ -357,4 +385,4 @@ def test_real_auto_start_sends_command_before_waiting_for_state(monkeypatch: pyt
 
     assert health["ok"] is True
     assert health["executor_started"] is True
-    assert events.index("command:1:0:1") < events.index("wait_for_state")
+    assert events.index("command:1:0:1:0") < events.index("wait_for_state")

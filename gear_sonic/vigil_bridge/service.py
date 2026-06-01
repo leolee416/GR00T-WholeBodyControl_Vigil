@@ -169,6 +169,20 @@ class VigilBridgeService:
         assert self.executor is not None
         return self.executor.halt()
 
+    def pause(self) -> RuntimeHealth:
+        assert self.executor is not None
+        pause = getattr(self.executor, "pause", None)
+        if callable(pause):
+            return pause()
+        return self.executor.halt()
+
+    def resume(self) -> RuntimeHealth:
+        assert self.executor is not None
+        resume = getattr(self.executor, "resume", None)
+        if callable(resume):
+            return resume()
+        return self.executor.start()
+
     def close(self) -> None:
         if not self._closed:
             assert self.executor is not None

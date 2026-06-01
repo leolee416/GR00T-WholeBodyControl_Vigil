@@ -67,6 +67,7 @@ struct OperatorState {
   bool stop = false;   ///< Emergency stop requested.
   bool start = false;  ///< Control-system start requested.
   bool play = false;   ///< Motion playback active.
+  bool pause = false;  ///< Pause policy execution and return to default pose.
 };
 
 /**

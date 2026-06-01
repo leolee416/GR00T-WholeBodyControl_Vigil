@@ -43,6 +43,10 @@ class BridgeRequestRouter:
             return self.service.get_robot_state()
         if route == "halt":
             return self.service.halt()
+        if route == "pause":
+            return self.service.pause()
+        if route == "resume":
+            return self.service.resume()
         if route == "close":
             self.service.close()
             return {
@@ -174,6 +178,8 @@ def _known_routes() -> set[str]:
         "robot_state",
         "get_robot_state",
         "halt",
+        "pause",
+        "resume",
         "close",
         "health",
     }

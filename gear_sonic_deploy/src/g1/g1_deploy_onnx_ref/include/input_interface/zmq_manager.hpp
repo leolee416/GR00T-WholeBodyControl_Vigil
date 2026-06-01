@@ -7,8 +7,8 @@
  *
  *   Topic      | Purpose
  *   -----------|--------
- *   command    | High-level control (start / stop / mode switch).
- *              | Wire format: `{ start: bool, stop: bool, planner: bool, delta_heading?: f32 }`
+ *   command    | High-level control (start / stop / pause / mode switch).
+ *              | Wire format: `{ start: bool, stop: bool, planner: bool, pause?: bool }`
  *   planner    | Per-frame locomotion commands (mode, movement, facing, speed, height,
  *              | optional upper-body / hand / VR data).  Active in PLANNER mode.
  *   pose       | Streamed motion frames (joint_pos, joint_vel, body_quat, …).
@@ -145,8 +145,8 @@ class ZMQManager : public InputInterface {
       
       std::cout << "[ZMQManager] Initialized (default: PLANNER mode)" << std::endl;
       std::cout << "  - Host: " << zmq_host_ << ":" << zmq_port_ << std::endl;
-      std::cout << "  - Command topic: '" << command_topic_ << "' (start/stop/mode)" << std::endl;
-      std::cout << "    Format: { start: bool, stop: bool, planner: bool }" << std::endl;
+      std::cout << "  - Command topic: '" << command_topic_ << "' (start/stop/pause/mode)" << std::endl;
+      std::cout << "    Format: { start: bool, stop: bool, planner: bool, pause?: bool }" << std::endl;
       std::cout << "  - Planner topic: '" << planner_topic_ << "' (movement)" << std::endl;
       std::cout << "  - Pose topic: '" << pose_topic_ << "' (streamed motion)" << std::endl;
     }
@@ -162,6 +162,7 @@ class ZMQManager : public InputInterface {
       report_temperature_flag_ = false;
       start_control_ = false;
       stop_control_ = false;
+      pause_control_ = false;
       
       // Handle stdin shortcuts
       char ch;
@@ -236,6 +237,9 @@ class ZMQManager : public InputInterface {
           }
           if (latest_command_.stop) {
             stop_control_ = true;
+          }
+          if (latest_command_.pause) {
+            pause_control_ = true;
           }
 
           // Handle mode switching
@@ -358,6 +362,39 @@ class ZMQManager : public InputInterface {
         
         // Clear hand joints control state
         has_hand_joints_ = false;
+      }
+
+      // Handle default-pose pause without terminating deploy.
+      if (pause_control_) {
+        operator_state.pause = true;
+        operator_state.start = false;
+        {
+          std::lock_guard<std::mutex> lock(current_motion_mutex);
+          operator_state.play = false;
+          current_frame = 0;
+          current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+          reinitialize_heading = true;
+        }
+
+        planner_state.enabled = false;
+        planner_state.initialized = false;
+        movement_state_buffer.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                                    {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f},
+                                                    -1.0f, -1.0f));
+
+        {
+          std::lock_guard<std::mutex> lock(planner_mutex_);
+          latest_planner_message_.valid = false;
+          latest_planner_message_.timestamp = {};
+          is_planner_ready_ = false;
+          switch_from_teleop_to_planner_ = false;
+        }
+        has_upper_body_control_ = false;
+        has_hand_joints_ = false;
+        has_vr_3point_control_ = false;
+        last_has_vr_3point_control_ = false;
+        std::cout << "[ZMQManager] Pause requested: planner disabled, locomotion reset to IDLE" << std::endl;
+        return;
       }
 
       // Delegate based on current mode
@@ -674,11 +711,12 @@ class ZMQManager : public InputInterface {
       
       if (hdr.fields.empty() || bufs.empty()) return;
       
-      int start_idx = -1, stop_idx = -1, planner_idx = -1;
+      int start_idx = -1, stop_idx = -1, planner_idx = -1, pause_idx = -1;
       for (size_t i = 0; i < hdr.fields.size(); ++i) {
         if (hdr.fields[i].name == "start") start_idx = static_cast<int>(i);
         else if (hdr.fields[i].name == "stop") stop_idx = static_cast<int>(i);
         else if (hdr.fields[i].name == "planner") planner_idx = static_cast<int>(i);
+        else if (hdr.fields[i].name == "pause") pause_idx = static_cast<int>(i);
       }
       
       if (start_idx < 0 || stop_idx < 0 || planner_idx < 0) {
@@ -744,25 +782,48 @@ class ZMQManager : public InputInterface {
           cmd.planner = (val != 0);
         }
       }
+
+      // Decode optional pause
+      if (pause_idx >= 0) {
+        const auto& pause_buf = bufs[pause_idx];
+        const auto& pause_field = hdr.fields[pause_idx];
+        if (pause_field.dtype == "bool" || pause_field.dtype == "u8") {
+          uint8_t val = 0;
+          if (pause_buf.size >= sizeof(uint8_t)) {
+            std::memcpy(&val, pause_buf.data, sizeof(uint8_t));
+            cmd.pause = (val != 0);
+          }
+        } else if (pause_field.dtype == "i32") {
+          int32_t val = 0;
+          if (pause_buf.size >= sizeof(int32_t)) {
+            std::memcpy(&val, pause_buf.data, sizeof(int32_t));
+            if (needs_swap) val = byte_swap(val);
+            cmd.pause = (val != 0);
+          }
+        }
+      }
       
       // Update buffer with OR logic to accumulate start/stop signals
       std::lock_guard<std::mutex> lock(command_mutex_);
       
-      // If starting new accumulation cycle, reset start/stop
+      // If starting new accumulation cycle, reset one-shot controls
       if (!latest_command_.valid) {
         latest_command_.start = false;
         latest_command_.stop = false;
+        latest_command_.pause = false;
       }
       
-      // Accumulate start/stop with OR logic
+      // Accumulate one-shot controls with OR logic
       latest_command_.start = latest_command_.start || cmd.start;
       latest_command_.stop = latest_command_.stop || cmd.stop;
+      latest_command_.pause = latest_command_.pause || cmd.pause;
       latest_command_.planner = cmd.planner;  // Overwrite (mode should be latest)
       latest_command_.valid = true;
       
       if constexpr (DEBUG_LOGGING) {
         std::cout << "[ZMQManager] Command received: start=" << cmd.start 
-                  << ", stop=" << cmd.stop << ", planner=" << cmd.planner << std::endl;
+                  << ", stop=" << cmd.stop << ", pause=" << cmd.pause
+                  << ", planner=" << cmd.planner << std::endl;
       }
     }
     
@@ -1242,6 +1303,7 @@ class ZMQManager : public InputInterface {
     bool report_temperature_flag_ = false;  ///< Set by 'F'/'f' keyboard shortcut.
     bool start_control_ = false;   ///< Start request from command message.
     bool stop_control_ = false;    ///< Stop request from command message.
+    bool pause_control_ = false;   ///< Pause request from command message.
 
     /// True once the planner has been initialised and is generating motions.
     bool is_planner_ready_ = false;

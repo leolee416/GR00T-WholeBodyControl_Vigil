@@ -191,14 +191,18 @@ class PackedPublisher:
         self.socket.close(0)
         self.context.term()
 
-    def send_command(self, start: bool, stop: bool, planner: bool = True) -> None:
+    def send_command(self, start: bool, stop: bool, planner: bool = True, pause: bool = False) -> None:
         fields = [
             {"name": "start", "dtype": "u8", "shape": [1]},
             {"name": "stop", "dtype": "u8", "shape": [1]},
             {"name": "planner", "dtype": "u8", "shape": [1]},
         ]
+        values = [int(start), int(stop), int(planner)]
+        if pause:
+            fields.append({"name": "pause", "dtype": "u8", "shape": [1]})
+            values.append(1)
         header = {"v": 1, "endian": "le", "count": 1, "fields": fields}
-        data = struct.pack("BBB", int(start), int(stop), int(planner))
+        data = struct.pack("B" * len(values), *values)
         self._send_packed("command", header, data)
 
     def send_planner(
@@ -488,6 +492,19 @@ class MujocoRuntimeClient:
                 self._startup_error = str(exc)
         self.started = False
         return self.get_health()
+
+    def pause(self) -> RuntimeHealth:
+        if self._publisher is not None:
+            try:
+                self.send_idle_burst(duration=0.3, preserve_facing=True)
+                self._publisher.send_command(start=False, stop=False, planner=True, pause=True)
+            except Exception as exc:  # noqa: BLE001 - surface through health.
+                self._startup_error = str(exc)
+        self.started = False
+        return self.get_health()
+
+    def resume(self) -> RuntimeHealth:
+        return self.start()
 
     def close(self, stop_control: bool = False) -> None:
         if stop_control:
@@ -820,6 +837,17 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
         self.started = False
         self._last_telemetry = dict(health.get("telemetry", {}))
         return health
+
+    def pause(self) -> RuntimeHealth:
+        assert self.runtime is not None
+        pause = getattr(self.runtime, "pause", None)
+        health = pause() if callable(pause) else self.runtime.halt()
+        self.started = False
+        self._last_telemetry = dict(health.get("telemetry", {}))
+        return health
+
+    def resume(self) -> RuntimeHealth:
+        return self.start()
 
     def close(self) -> None:
         assert self.runtime is not None

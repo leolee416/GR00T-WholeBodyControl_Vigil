@@ -23,11 +23,15 @@
  * ## Control-Loop State Machine (ProgramState)
  *
  *   INIT → WAIT_FOR_CONTROL → CONTROL
+ *                     ↑          ↓
+ *                 PAUSED ← PAUSE_PREPARE
  *
  *   - **INIT**: Wait for a valid LowState message from the robot.
  *   - **WAIT_FOR_CONTROL**: Robot is ready; wait for operator "start" signal.
  *   - **CONTROL**: Active policy execution – gather observations, infer actions,
  *     write motor commands.  Exits on operator "stop" or error.
+ *   - **PAUSE_PREPARE**: Stop policy inference and ramp to default_angles.
+ *   - **PAUSED**: Hold default_angles while keeping deploy, bridge, and telemetry alive.
  *
  * ## CLI Arguments (selected)
  *
@@ -165,7 +169,7 @@ using namespace unitree_hg::msg::dds_;
 class G1Deploy {
   private:
     /// State machine for the control loop lifecycle.
-    enum class ProgramState { INIT, WAIT_FOR_CONTROL, CONTROL };
+    enum class ProgramState { INIT, WAIT_FOR_CONTROL, CONTROL, PAUSE_PREPARE, PAUSED };
     
     // =========================================================================
     // Core timing, mode, and counters
@@ -176,6 +180,7 @@ class G1Deploy {
     double planner_dt_;    ///< Planner loop period  (10 Hz = 0.1 s).
     double input_dt_;      ///< Input poll period    (100 Hz = 0.01 s).
     double duration_;      ///< Duration of the INIT ramp-up to default pose (3 s).
+    double pause_time_;    ///< Elapsed time inside PAUSE_PREPARE default-pose ramp.
     int counter_;          ///< General-purpose tick counter.
     Mode mode_pr_;         ///< Ankle control mode (series PR vs. parallel AB).
     uint8_t mode_machine_; ///< Robot variant code received from LowState.
@@ -188,19 +193,19 @@ class G1Deploy {
     // Buffered input data (the real data to the policy engine)
     // has_*_data_ flags indicate whether the getter returned valid buffered data (true) or defaults (false)
     bool has_vr_3point_data_ = false;
-    std::array<double, 9> vr_3point_position_buffer_;
-    std::array<double, 12> vr_3point_orientation_buffer_;
-    std::array<double, 3> vr_3point_compliance_buffer_;
+    std::array<double, 9> vr_3point_position_buffer_{};
+    std::array<double, 12> vr_3point_orientation_buffer_{};
+    std::array<double, 3> vr_3point_compliance_buffer_{};
     bool has_vr_5point_data_ = false;
-    std::array<double, 15> vr_5point_position_buffer_;
-    std::array<double, 20> vr_5point_orientation_buffer_;
+    std::array<double, 15> vr_5point_position_buffer_{};
+    std::array<double, 20> vr_5point_orientation_buffer_{};
     bool has_left_hand_data_ = false;
     bool has_right_hand_data_ = false;
-    std::array<double, 7> left_hand_joint_buffer_;
-    std::array<double, 7> right_hand_joint_buffer_;
+    std::array<double, 7> left_hand_joint_buffer_{};
+    std::array<double, 7> right_hand_joint_buffer_{};
     bool has_upper_body_data_ = false;
-    std::array<double, 17> upper_body_joint_positions_buffer_;
-    std::array<double, 17> upper_body_joint_velocities_buffer_;
+    std::array<double, 17> upper_body_joint_positions_buffer_{};
+    std::array<double, 17> upper_body_joint_velocities_buffer_{};
     std::vector<double> token_state_data_;  // Token buffer (size from config)
     
     // =========================================================================
@@ -298,6 +303,8 @@ class G1Deploy {
     std::array<double, G1_NUM_MOTOR> last_action;
     std::array<double, 7> last_left_hand_action;
     std::array<double, 7> last_right_hand_action;
+    std::array<double, G1_NUM_MOTOR> pause_start_angles_{};
+    bool pause_start_captured_ = false;
     
     // =========================================================================
     // Logging / recording streams
@@ -2163,6 +2170,7 @@ class G1Deploy {
         planner_dt_(0.1),
         input_dt_(0.01),
         duration_(3.0),
+        pause_time_(0.0),
         counter_(0),
         mode_pr_(Mode::PR),
         mode_machine_(0),
@@ -2753,6 +2761,131 @@ class G1Deploy {
         dex3_hands_.open(false);
         std::cout << "Init Done" << std::endl;
       }
+      motor_command_buffer_.SetData(motor_command_tmp);
+      return true;
+    }
+
+    MotorCommand CreateDefaultPoseCommand() const {
+      MotorCommand motor_command_tmp;
+      for (int i = 0; i < G1_NUM_MOTOR; ++i) {
+        motor_command_tmp.tau_ff.at(i) = 0.0;
+        motor_command_tmp.q_target.at(i) = static_cast<float>(default_angles[i]);
+        motor_command_tmp.dq_target.at(i) = 0.0;
+        motor_command_tmp.kp.at(i) = kps[i];
+        motor_command_tmp.kd.at(i) = kds[i];
+      }
+      return motor_command_tmp;
+    }
+
+    void PublishRobotConfig() {
+      for (auto& oi : output_interfaces_) {
+        if (oi) {
+          oi->publish_config();
+        }
+      }
+    }
+
+    void PublishBridgeStateSnapshot() {
+      if (!GatherRobotStateToLogger()) {
+        return;
+      }
+      std::shared_ptr<const MotionSequence> current_motion_copy = nullptr;
+      int current_frame_copy = 0;
+      {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        current_motion_copy = current_motion_;
+        current_frame_copy = current_frame_;
+      }
+      if (!current_motion_copy) {
+        return;
+      }
+      for (auto& output_interface : output_interfaces_) {
+        if (output_interface) {
+          output_interface->publish(
+            vr_3point_position_buffer_, vr_3point_orientation_buffer_, vr_3point_compliance_buffer_,
+            left_hand_joint_buffer_, right_hand_joint_buffer_, init_ref_data_root_rot_array_,
+            heading_state_buffer_, current_motion_copy, current_frame_copy
+          );
+        }
+      }
+    }
+
+    void ResetPlannerAndMotionForPause() {
+      operator_state.start = false;
+      operator_state.play = false;
+      reinitialize_heading_ = true;
+      movement_state_buffer_.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                                   {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f},
+                                                   -1.0f, -1.0f));
+
+      if (planner_) {
+        planner_->planner_state_.enabled = false;
+        planner_->planner_state_.initialized = false;
+        planner_->motion_available_ = false;
+      }
+      if (planner_motion_) {
+        planner_motion_->timesteps = 0;
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        current_frame_ = 0;
+        current_motion_ = motion_reader_.GetMotionShared(motion_reader_.current_motion_index_);
+      }
+
+      last_movement_state_ = MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                           {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f},
+                                           -1.0f, -1.0f);
+      replan_interval_counter_ = 0.0f;
+      idle_readapt_stored_ = false;
+      idle_readapt_state_ = IdleReadaptState::IDLE;
+    }
+
+    void BeginPausePrepare() {
+      auto low_state_data = low_state_buffer_.GetDataWithTime();
+      const std::shared_ptr<const LowState_> ls = low_state_data.data;
+      if (ls) {
+        for (int i = 0; i < G1_NUM_MOTOR; ++i) {
+          pause_start_angles_.at(i) = ls->motor_state()[i].q();
+        }
+      } else {
+        for (int i = 0; i < G1_NUM_MOTOR; ++i) {
+          pause_start_angles_.at(i) = default_angles[i];
+        }
+      }
+      pause_start_captured_ = true;
+      pause_time_ = 0.0;
+      operator_state.pause = false;
+      ResetPlannerAndMotionForPause();
+      program_state_ = ProgramState::PAUSE_PREPARE;
+      std::cout << "[Control] Pause requested: ramping to default_angles" << std::endl;
+    }
+
+    bool PausePrepareControl() {
+      auto low_state_data = low_state_buffer_.GetDataWithTime();
+      const std::shared_ptr<const LowState_> ls = low_state_data.data;
+      if (!ls && !pause_start_captured_) {
+        return false;
+      }
+
+      MotorCommand motor_command_tmp = CreateDefaultPoseCommand();
+      pause_time_ += control_dt_;
+      if (pause_time_ < duration_) {
+        const double ratio = std::clamp(pause_time_ / duration_, 0.0, 1.0);
+        for (int i = 0; i < G1_NUM_MOTOR; ++i) {
+          motor_command_tmp.q_target.at(i) =
+              static_cast<float>(pause_start_angles_.at(i) * (1.0 - ratio) + default_angles[i] * ratio);
+        }
+        dex3_hands_.close(true);
+        dex3_hands_.close(false);
+      } else {
+        program_state_ = ProgramState::PAUSED;
+        pause_start_captured_ = false;
+        dex3_hands_.open(true);
+        dex3_hands_.open(false);
+        std::cout << "[Control] Pause Ready: holding default_angles" << std::endl;
+      }
+
       motor_command_buffer_.SetData(motor_command_tmp);
       return true;
     }
@@ -3793,6 +3926,8 @@ class G1Deploy {
      *    8. Handle motion recording (streamed + planner).
      *    9. CurrentFrameAdvancement — advance playback cursor, blend planner.
      *    10. Periodic timing log every 50 ticks (~1 s).
+     *  - PAUSE_PREPARE: no policy inference; ramp joints to default_angles.
+     *  - PAUSED: no policy inference; hold default_angles until start/resume.
      */
     void Control() {
       if (operator_state.stop) { return; }
@@ -3805,7 +3940,7 @@ class G1Deploy {
           }
           // Re-publish robot_config so late-joining subscribers can receive it
           // before the policy is activated (ZMQ PUB has no persistence).
-          for (auto& oi : output_interfaces_) { if (oi) oi->publish_config(); }
+          PublishRobotConfig();
           break;
 
         case ProgramState::WAIT_FOR_CONTROL:
@@ -3814,10 +3949,14 @@ class G1Deploy {
             operator_state.stop = true;
             break;
           }
+          if (operator_state.pause) {
+            BeginPausePrepare();
+            break;
+          }
 
           // Re-publish robot_config so late-joining subscribers can receive it
           // before the policy is activated (ZMQ PUB has no persistence).
-          for (auto& oi : output_interfaces_) { if (oi) oi->publish_config(); }
+          PublishRobotConfig();
           if (operator_state.start) {
             // Warn if starting control in token mode without tokens, but allow it
             if (initial_encoder_mode_ == -1 && !first_token_received_) {
@@ -3837,6 +3976,10 @@ class G1Deploy {
           if (!CheckSafety()) {
             std::cout << "[ERROR] Safety check failed, stopping control." << std::endl;
             operator_state.stop = true;
+            break;
+          }
+          if (operator_state.pause) {
+            BeginPausePrepare();
             break;
           }
 
@@ -4075,6 +4218,37 @@ class G1Deploy {
           }
           break;
         }
+
+        case ProgramState::PAUSE_PREPARE:
+          operator_state.pause = false;
+          if (!CheckSafety()) {
+            std::cout << "[ERROR] Safety check failed while preparing pause." << std::endl;
+            operator_state.stop = true;
+            break;
+          }
+          if (!PausePrepareControl()) {
+            std::cout << "LowState is not available, waiting before pause ramp" << std::endl;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          }
+          PublishRobotConfig();
+          PublishBridgeStateSnapshot();
+          break;
+
+        case ProgramState::PAUSED:
+          operator_state.pause = false;
+          if (!CheckSafety()) {
+            std::cout << "[ERROR] Safety check failed while paused." << std::endl;
+            operator_state.stop = true;
+            break;
+          }
+          motor_command_buffer_.SetData(CreateDefaultPoseCommand());
+          PublishRobotConfig();
+          PublishBridgeStateSnapshot();
+          if (operator_state.start) {
+            std::cout << "[Control] Resume requested from PAUSED; returning to WAIT_FOR_CONTROL" << std::endl;
+            program_state_ = ProgramState::WAIT_FOR_CONTROL;
+          }
+          break;
       }
     }
 };
@@ -4465,4 +4639,3 @@ int main(int argc, char const* argv[]) {
   std::cout << "[DEBUG] Program exiting normally..." << std::endl;
   return 0;
 }
-

@@ -107,6 +107,18 @@ def test_http_execute_action_endpoint(http_server_url: str) -> None:
     assert response["executed_arguments"]["distance_m"] > 0.0
 
 
+def test_http_pause_and_resume_endpoints(http_server_url: str) -> None:
+    pause_status, pause_response = _post_json(http_server_url, "pause", {"runtime_mode": "dry_run"})
+    resume_status, resume_response = _post_json(http_server_url, "resume", {"runtime_mode": "dry_run"})
+
+    assert pause_status == 200
+    assert pause_response["ok"] is True
+    assert pause_response["executor_started"] is False
+    assert resume_status == 200
+    assert resume_response["ok"] is True
+    assert resume_response["executor_started"] is True
+
+
 def test_http_unknown_endpoint_returns_structured_404(http_server_url: str) -> None:
     with pytest.raises(HTTPError) as exc_info:
         _post_json(http_server_url, "missing", {})

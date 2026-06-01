@@ -79,6 +79,7 @@ class RealBridgeConfig:
     state_timeout_s: float = 3.0
     startup_command_burst_s: float = 0.5
     startup_command_period_s: float = 0.05
+    pause_settle_time_s: float = 3.2
     camera_enabled: bool = True
     camera_required: bool = True
     camera_host: str = "localhost"
@@ -96,6 +97,7 @@ class RealRuntimeClient:
     def __init__(self, config: RealBridgeConfig) -> None:
         self.config = config
         self.started = False
+        self.paused = False
         self._startup_error: str | None = None
         self._publisher: PackedPublisher | None = None
         self._state_sub: StateSubscriber | None = None
@@ -139,6 +141,7 @@ class RealRuntimeClient:
                 raise RuntimeError("no real-robot camera payload received")
 
             self.started = True
+            self.paused = False
             self._startup_error = None
         except Exception as exc:  # noqa: BLE001 - return structured health.
             self._startup_error = str(exc)
@@ -154,10 +157,43 @@ class RealRuntimeClient:
             except Exception as exc:  # noqa: BLE001 - surface through health.
                 self._startup_error = str(exc)
         self.started = False
+        self.paused = False
+        return self.get_health()
+
+    def pause(self) -> RuntimeHealth:
+        if self._publisher is not None:
+            try:
+                self.send_idle_burst(duration=0.4, preserve_facing=True)
+                deadline = time.monotonic() + max(self.config.startup_command_burst_s, 0.0)
+                period_s = max(self.config.startup_command_period_s, 0.01)
+                while True:
+                    self._publisher.send_command(start=False, stop=False, planner=True, pause=True)
+                    remaining_s = deadline - time.monotonic()
+                    if remaining_s <= 0.0:
+                        break
+                    time.sleep(min(period_s, remaining_s))
+                if self.config.pause_settle_time_s > 0.0:
+                    time.sleep(self.config.pause_settle_time_s)
+            except Exception as exc:  # noqa: BLE001 - surface through health.
+                self._startup_error = str(exc)
+        self.started = False
+        self.paused = True
+        return self.get_health()
+
+    def resume(self) -> RuntimeHealth:
+        health = self.start()
+        if health.get("ok", False) and self.config.motion_enabled and not self.config.auto_start_control:
+            try:
+                self.send_start_control()
+                self.started = True
+                self.paused = False
+            except Exception as exc:  # noqa: BLE001 - surface through health.
+                self._startup_error = str(exc)
         return self.get_health()
 
     def close(self) -> None:
         self.started = False
+        self.paused = False
         for closeable in (self._image_sub, self._state_sub, self._publisher):
             if closeable is not None:
                 closeable.close()
@@ -366,6 +402,7 @@ class RealRuntimeClient:
         ready_for_motion = (
             self._startup_error is None
             and self.config.motion_enabled
+            and not self.paused
             and command_connected
             and state_connected
             and (camera_connected or not self.config.camera_required)
@@ -390,6 +427,7 @@ class RealRuntimeClient:
                 "camera_connected": camera_connected,
                 "camera_endpoint": f"tcp://{self.config.camera_host}:{self.config.camera_port}",
                 "motion_enabled": self.config.motion_enabled,
+                "paused": self.paused,
                 "ready_for_motion": ready_for_motion,
                 "auto_start_control": self.config.auto_start_control,
                 "max_speed_mps": self.config.max_move_speed_mps,
@@ -452,6 +490,22 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
         assert self.runtime is not None
         health = self.runtime.halt()
         self.started = False
+        self._last_telemetry = dict(health.get("telemetry", {}))
+        return health
+
+    def pause(self) -> RuntimeHealth:
+        assert self.runtime is not None
+        pause = getattr(self.runtime, "pause", None)
+        health = pause() if callable(pause) else self.runtime.halt()
+        self.started = False
+        self._last_telemetry = dict(health.get("telemetry", {}))
+        return health
+
+    def resume(self) -> RuntimeHealth:
+        assert self.runtime is not None
+        resume = getattr(self.runtime, "resume", None)
+        health = resume() if callable(resume) else self.runtime.start()
+        self.started = bool(health.get("ok", False)) and bool(health.get("executor_started", False))
         self._last_telemetry = dict(health.get("telemetry", {}))
         return health
 
