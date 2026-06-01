@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import textwrap
@@ -25,6 +26,8 @@ DEPLOY_DIR = REPO_ROOT / "gear_sonic_deploy"
 DEFAULT_SESSION = "vigil_bridge"
 DEFAULT_CONTAINER = "g1-deploy-dev"
 DEFAULT_TENSORRT_ROOT = "/home/unitree/TensorRT-10.7.0.23"
+DEFAULT_CAMERA_SERVICE = "composed_camera_server_vigil.service"
+DEFAULT_LEGACY_CAMERA_SERVICE = "composed_camera_server.service"
 RUNTIME_ROOT = Path("/tmp/vigil_bridge_launcher")
 
 
@@ -76,6 +79,27 @@ def _build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--model-chunk-pause", type=float, default=0.0, help="Pause between move_model chunks.")
     start_parser.add_argument("--camera-host", default="localhost", help="Real camera ZMQ host.")
     start_parser.add_argument("--camera-port", type=int, default=5555, help="Real camera ZMQ port.")
+    start_parser.add_argument(
+        "--camera-service",
+        default=DEFAULT_CAMERA_SERVICE,
+        help="Systemd camera service to start for this Vigil launcher session.",
+    )
+    start_parser.add_argument(
+        "--legacy-camera-service",
+        default=DEFAULT_LEGACY_CAMERA_SERVICE,
+        help="Legacy camera service whose active state is restored by stop.",
+    )
+    start_parser.add_argument(
+        "--no-camera-service",
+        action="store_true",
+        help="Do not manage a systemd camera service before starting the bridge.",
+    )
+    start_parser.add_argument(
+        "--camera-service-timeout",
+        type=float,
+        default=15.0,
+        help="Seconds to wait for the managed camera service port.",
+    )
     start_parser.add_argument("--no-real-motion", action="store_true", help="Do not pass --enable-real-motion.")
     start_parser.add_argument("--no-auto-start-control", action="store_true", help="Do not pass --auto-start-control.")
     start_parser.add_argument(
@@ -89,10 +113,25 @@ def _build_parser() -> argparse.ArgumentParser:
     stop_parser = subparsers.add_parser("stop", help="Halt bridge/deploy and stop the tmux session.")
     stop_parser.add_argument("--bridge-host", default="127.0.0.1", help="Local bridge HTTP host for halt.")
     stop_parser.add_argument("--bridge-port", type=int, default=8765, help="Local bridge HTTP port for halt.")
+    stop_parser.add_argument(
+        "--no-camera-service",
+        action="store_true",
+        help="Do not stop the Vigil camera service or restore the previous camera service.",
+    )
 
     status_parser = subparsers.add_parser("status", help="Show tmux, Docker, and bridge status.")
     status_parser.add_argument("--bridge-host", default="127.0.0.1", help="Local bridge HTTP host for health.")
     status_parser.add_argument("--bridge-port", type=int, default=8765, help="Local bridge HTTP port for health.")
+    status_parser.add_argument(
+        "--camera-service",
+        default=DEFAULT_CAMERA_SERVICE,
+        help="Vigil camera service name to report.",
+    )
+    status_parser.add_argument(
+        "--legacy-camera-service",
+        default=DEFAULT_LEGACY_CAMERA_SERVICE,
+        help="Legacy camera service name to report.",
+    )
     subparsers.add_parser("attach", help="Attach to the tmux session.")
     subparsers.add_parser("logs", help="Print launcher log paths.")
     return parser
@@ -111,6 +150,9 @@ def start(args: argparse.Namespace) -> int:
 
     runtime_dir = _runtime_dir(args.session)
     runtime_dir.mkdir(parents=True, exist_ok=True)
+    if not args.no_camera_service:
+        _activate_camera_service(args, runtime_dir)
+
     scripts_dir = runtime_dir / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -167,6 +209,9 @@ def stop(args: argparse.Namespace) -> int:
     if _docker_container_exists(args.container_name):
         _run(["docker", "rm", "-f", args.container_name], check=False)
 
+    if not args.no_camera_service:
+        _restore_camera_service(args.session)
+
     print("Stopped robot-side Vigil bridge launcher.")
     return 0
 
@@ -184,6 +229,14 @@ def status(args: argparse.Namespace) -> int:
         print(f"container {args.container_name}: not found")
     health = _get_text(f"http://{args.bridge_host}:{args.bridge_port}/health", timeout=1.0)
     print(f"bridge health: {health if health else 'unavailable'}")
+    print(
+        f"camera service {args.camera_service}: "
+        f"{'active' if _systemctl_is_active(args.camera_service) else 'inactive'}"
+    )
+    print(
+        f"legacy camera service {args.legacy_camera_service}: "
+        f"{'active' if _systemctl_is_active(args.legacy_camera_service) else 'inactive'}"
+    )
     return 0
 
 
@@ -380,6 +433,10 @@ def _runtime_dir(session: str) -> Path:
     return RUNTIME_ROOT / session
 
 
+def _camera_state_path(session: str) -> Path:
+    return _runtime_dir(session) / "camera_service_state.json"
+
+
 def _require_command(command: str) -> None:
     if shutil.which(command) is None:
         if command == "tmux":
@@ -393,6 +450,84 @@ def _tmux_session_exists(session: str) -> bool:
 
 def _docker_container_exists(container: str) -> bool:
     return _run(["docker", "inspect", container], check=False, capture_output=True).returncode == 0
+
+
+def _activate_camera_service(args: argparse.Namespace, runtime_dir: Path) -> None:
+    state = {
+        "camera_service": args.camera_service,
+        "legacy_camera_service": args.legacy_camera_service,
+        "legacy_active_before": _systemctl_is_active(args.legacy_camera_service),
+        "vigil_active_before": _systemctl_is_active(args.camera_service),
+    }
+    (runtime_dir / "camera_service_state.json").write_text(
+        json.dumps(state, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    print(f"[launcher] starting camera service {args.camera_service}")
+    result = _run(["systemctl", "start", args.camera_service], check=False, capture_output=True)
+    if result.returncode != 0:
+        details = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        raise SystemExit(
+            textwrap.dedent(
+                f"""\
+                Failed to start {args.camera_service}.
+                This launcher does not modify or disable {args.legacy_camera_service}.
+                Install the Vigil service once, then rerun:
+                    sudo cp systemd/composed_camera_server_vigil.service /etc/systemd/system/
+                    sudo systemctl daemon-reload
+
+                systemctl output:
+                {details}
+                """
+            ).strip()
+        )
+
+    if not _wait_for_tcp_port(args.camera_host, args.camera_port, args.camera_service_timeout):
+        raise SystemExit(
+            f"Camera service {args.camera_service} started, but "
+            f"{args.camera_host}:{args.camera_port} did not become reachable."
+        )
+
+
+def _restore_camera_service(session: str) -> None:
+    state_path = _camera_state_path(session)
+    if not state_path.exists():
+        return
+
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+
+    camera_service = str(state.get("camera_service", DEFAULT_CAMERA_SERVICE))
+    legacy_service = str(state.get("legacy_camera_service", DEFAULT_LEGACY_CAMERA_SERVICE))
+    legacy_active_before = bool(state.get("legacy_active_before", False))
+
+    print(f"[launcher] stopping camera service {camera_service}")
+    _run(["systemctl", "stop", camera_service], check=False)
+    if legacy_active_before:
+        print(f"[launcher] restoring legacy camera service {legacy_service}")
+        _run(["systemctl", "start", legacy_service], check=False)
+    try:
+        state_path.unlink()
+    except OSError:
+        pass
+
+
+def _systemctl_is_active(service: str) -> bool:
+    return _run(["systemctl", "is-active", "--quiet", service], check=False).returncode == 0
+
+
+def _wait_for_tcp_port(host: str, port: int, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.2)
+    return False
 
 
 def _stop_stale_bridge_service(port: int) -> None:

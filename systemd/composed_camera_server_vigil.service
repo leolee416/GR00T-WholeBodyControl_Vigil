@@ -1,0 +1,43 @@
+# systemd service for the Vigil-specific SONIC composed camera server.
+#
+# This unit is intentionally separate from composed_camera_server.service.
+# Do not overwrite the legacy service with this configuration: users starting
+# composed_camera_server.service should continue to get the legacy repository.
+#
+# Install on the robot with:
+#     sudo cp systemd/composed_camera_server_vigil.service /etc/systemd/system/
+#     sudo systemctl daemon-reload
+#
+# Switch from the legacy service to this Vigil service with:
+#     sudo systemctl stop composed_camera_server.service
+#     sudo systemctl start composed_camera_server_vigil.service
+#
+# Check logs with:
+#     journalctl -u composed_camera_server_vigil.service -f
+
+[Unit]
+Description=SONIC Vigil Composed Camera Server (RealSense, ZMQ)
+After=network.target
+Conflicts=composed_camera_server.service
+
+[Service]
+Type=simple
+User=unitree
+Environment="HOME=/home/unitree"
+Environment="PYTHONPATH=/home/unitree/GR00T-WholeBodyControl_Vigil"
+WorkingDirectory=/home/unitree/GR00T-WholeBodyControl_Vigil
+
+# Reuse the existing camera venv for camera SDK dependencies, but import code
+# from WorkingDirectory/PYTHONPATH above so sensor_server.py comes from _Vigil.
+ExecStart=/home/unitree/GR00T-WholeBodyControl/.venv_camera/bin/python -m gear_sonic.camera.composed_camera \
+    --ego-view-camera realsense \
+    --ego-view-device-id 0 \
+    --port 5555
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
