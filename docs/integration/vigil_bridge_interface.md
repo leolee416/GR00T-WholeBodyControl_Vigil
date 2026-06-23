@@ -63,6 +63,13 @@ python gear_sonic_deploy/scripts/run_vigil_bridge.py --host 127.0.0.1 --port 876
 | `POST` | `/pause` | optional object | `RuntimeHealth` | 保留 policy/deploy；停止推理并让真机保持 `default_angles` |
 | `POST` | `/resume` | optional object | `RuntimeHealth` | 从 paused runtime 重新接入 policy |
 | `POST` | `/close` | optional object | close response | 释放 bridge 资源；不要假设会停止 deploy/policy |
+| `GET/POST` | `/audio/health` | optional object | audio health object | 音频 I/O 健康检查；未启用时返回结构化不可用 |
+| `POST` | `/audio/session/start` | audio session options | audio session response | 启动音频 session；HTTP fallback 和 WebSocket 共用 session manager |
+| `POST` | `/audio/session/stop` | audio session options | audio session response | 停止音频 session，可选择停止 input/output |
+| `POST` | `/audio/input_segment` | `duration_s`, `format` | base64 PCM/WAV audio | HTTP fallback：读取最近一段 mic PCM |
+| `POST` | `/audio/output_segment` | base64 PCM/WAV audio | speaker playback result | HTTP fallback：播放一段 PCM/WAV |
+| `POST` | `/audio/tts` | `text`, optional `language`/`speaker_id` | native speaker TTS result | HTTP fallback：通过 G1 `AudioClient.TtsMaker` 播放中英文文本；不经过 PCM 峰值校准 |
+| `POST` | `/audio/output_stop` | optional object | speaker stop result | 停止当前 speaker 输出 |
 
 协议常量见 `gear_sonic/vigil_bridge/protocol.py`：
 
@@ -107,8 +114,48 @@ Response stable fields:
 | `runtime_mode` | string | 当前 runtime mode |
 | `capabilities.actions` | list[string] | 公开动作名 |
 | `capabilities.observation` | list[string] | 公开观测类型 |
+| `capabilities.audio` | object/absent | 仅当客户端请求音频或服务显式配置时出现 |
 | `capabilities.oracle_source` | string | 当前为 `none` |
 | `bridge.name` / `bridge.version` | string | bridge 标识 |
+
+### Audio Compatibility
+
+音频能力是协商式扩展，保证兼容老 VLT：
+
+- 老 VLT 按旧请求调用 `/handshake`，不包含 `required_capabilities.audio` 时，`capabilities` 不会出现 `audio` 字段。
+- 新 VLT 需要音频时，在 `required_capabilities.audio` 中声明需求，bridge 才返回 `capabilities.audio`。
+- 运维也可用 `--audio-advertise-always` 让 bridge 对所有客户端主动暴露音频能力。
+- 原有 `/execute_action`、`/observation`、`/robot_state` 调用方式不变。
+
+音频能力示例：
+
+```json
+{
+  "capabilities": {
+    "actions": ["navigate.forward"],
+    "observation": ["rgb", "depth", "robot_state"],
+    "audio": {
+      "enabled": true,
+      "input": ["pcm16_16k_mono_stream", "pcm16_16k_mono_segment"],
+      "output": ["pcm16_16k_mono_stream", "pcm16_16k_mono_segment", "native_tts_text"],
+      "transport": ["websocket", "http_segment_fallback"],
+      "sample_rate": 16000,
+      "channels": 1,
+      "sample_width": 2,
+      "speaker_volume": 100,
+      "speaker_peak_target": 27800,
+      "tts": {
+        "languages": ["zh", "en"],
+        "speaker_ids": {"zh": 0, "en": 1},
+        "text_max_chars": 500,
+        "native_loudness_calibrated": false,
+        "calibrated_output_path": "/audio/output_segment"
+      }
+    },
+    "oracle_source": "none"
+  }
+}
+```
 
 ### Execute Action
 
@@ -195,6 +242,93 @@ Depth 当前作为 camera stream 的 image entry 透出，命名沿用上游 cam
 | `estimated` | 是否为估计值 |
 | `source` | 数据来源，例如 `rt/odostate`, `g1_debug_heading`, `fake` |
 
+### Audio I/O
+
+Bridge 音频设计参考 camera adapter 的 runtime 边界，但不是 snapshot observation：
+
+```text
+G1 mic UDP multicast
+  -> AudioSessionManager ring buffer
+  -> WebSocket PCM chunks / HTTP input_segment
+  -> AGENT/VLT OMNI
+
+AGENT/VLT OMNI PCM chunks
+  -> WebSocket / HTTP output_segment
+  -> AudioSessionManager speaker queue
+  -> G1 AudioClient PlayStream
+```
+
+标准音频格式：
+
+- 16 kHz
+- mono
+- signed PCM16 little-endian
+- speaker API volume: `100`
+- runtime PCM peak target: `27800`
+
+Streaming 是主路径。几十秒整段音频只作为 fallback/debug，因为它至少会增加“录满音频 + 上传/解码 + 播放排队”的延迟，不适合实时对话。
+
+Native TTS 是独立的 HTTP fallback 输出，不经过 OMNI PCM 流。Host/VLT 发送文本后，
+bridge 在 G1 侧调用 `AudioClient.TtsMaker(text, speaker_id)`。默认映射：
+
+| language | speaker_id |
+| --- | --- |
+| `zh` | `0` |
+| `en` | `1` |
+
+示例：
+
+```bash
+curl -s -X POST http://<robot-host>:8765/audio/tts \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"你好，这是 G1 运行时 TTS 测试。","language":"zh"}'
+
+curl -s -X POST http://<robot-host>:8765/audio/tts \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Hello, this is a G1 runtime TTS test.","language":"en"}'
+```
+
+注意：native TTS 不经过 `speaker_peak_target=27800` 的 PCM 归一化。实测
+`SetVolume(100)` 下仍明显小于 `PlayStream` 路径。需要和当前 speaker
+校准响度一致时，VLT/OMNI 侧应先把文本合成为 16 kHz mono PCM16，再调用
+`/audio/output_segment` 或 WebSocket binary output；bridge 会按 `27800`
+峰值归一化后通过 `PlayStream` 播放。
+
+Bridge 侧启动示例：
+
+```bash
+python gear_sonic_deploy/scripts/run_vigil_bridge.py \
+  --backend real \
+  --host 0.0.0.0 \
+  --port 8765 \
+  --audio-enabled \
+  --audio-ws \
+  --audio-ws-port 8766 \
+  --audio-mic-interface-ip 192.168.123.164 \
+  --audio-speaker-iface enP8p1s0 \
+  --audio-speaker-runner /home/unitree/g1_audio_tests/speaker_loud_music/build/g1_speaker_loud_music_runner
+```
+
+Host/VLT 侧 WebSocket smoke test:
+
+```bash
+python -m gear_sonic.vigil_bridge.audio_ws_client \
+  --url ws://<robot-host>:8766/audio/ws \
+  --listen-seconds 5 \
+  --record-wav vlt_mic_check.wav \
+  --send-tone
+```
+
+也可以发送已准备好的 16 kHz mono PCM16 WAV:
+
+```bash
+python -m gear_sonic.vigil_bridge.audio_ws_client \
+  --url ws://<robot-host>:8766/audio/ws \
+  --listen-seconds 5 \
+  --record-wav vlt_mic_check.wav \
+  --send-wav output_16k_mono_pcm16.wav
+```
+
 ## 当前能力表
 
 ### Actions
@@ -227,6 +361,7 @@ Depth 当前作为 camera stream 的 image entry 透出，命名沿用上游 cam
 | observation | `rgb` | none | `images.<camera>.encoding`, `images.<camera>.data`, `camera_timestamps` | `protocol.py`, provider normalize methods | adapter/provider tests | current |
 | observation | `depth` | none | `images.<camera>_depth.encoding`, `images.<camera>_depth.data`, `camera_timestamps.<camera>_depth` | `protocol.py`, camera payload normalize methods | adapter/provider tests | current |
 | observation | `robot_state` | none | `robot_state.base_pose`, `robot_state.base_velocity`, `robot_state.estimated`, `robot_state.source` | `protocol.py`, provider state methods | adapter/provider tests | current |
+| endpoint | `/audio/*` | session/audio payload, `text` for `/audio/tts` | audio health, base64 PCM/WAV, TTS result, speaker telemetry | `audio.py`, `audio_ws.py`, `service.py`, `transport.py`, `run_vigil_bridge.py` | `tests/vigil_bridge/test_vigil_bridge_audio.py` | current |
 | action | `<new.skill>` | `<arguments.*>`, `<safety.*>` | `<executed_arguments.*>`, `telemetry.completion`, optional `motion_result` | `protocol.py`, executor/backend files, maybe `run_vigil_bridge.py` | service + backend tests | proposed |
 | observation | `<new_observation>` | optional request keys | `ObservationResponse.<new field>` or `telemetry.<source>` | `protocol.py`, sensor providers, maybe backend config | provider tests | proposed |
 | endpoint | `/<new_endpoint>` | JSON object | JSON object with `ok/error_message` when applicable | `transport.py`, `service.py`, `protocol.py` | transport tests | proposed |

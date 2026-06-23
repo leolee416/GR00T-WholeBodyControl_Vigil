@@ -30,6 +30,18 @@ This index lists the Codex-facing documentation for this repository.
 - `docs/integration/vigil_bridge_interface.md`  
   Current bridge protocol, capabilities, message shapes, and extension table.
 
+- `docs/integration/g1_audio_io.md`
+  Unitree G1 audio input/output debugging notes and future runtime extension
+  guidance.
+
+- `docs/integration/g1_audio_bridge_connectivity.md`
+  G1/Host-VLT audio bridge connectivity record, startup commands, smoke tests,
+  known failures, and speaker/microphone configuration.
+
+- `docs/integration/g1_tts_joint_debug_quickstart.md`
+  Short G1-side startup and Host/VLT-side standalone client commands for TTS
+  joint debugging.
+
 ## Workflows
 
 - `docs/workflows/codex_workflows.md`  

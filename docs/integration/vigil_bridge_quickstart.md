@@ -32,6 +32,28 @@ cd ~/GR00T-WholeBodyControl_Vigil
 ./vigil_bridge start --max-speed-mps 2 --camera-required --attach
 ```
 
+如需在同一次机器人调试会话中一起启动 Audio + TTS bridge，先设置 G1
+speaker runner 路径，然后在 `./vigil_bridge start` 上追加 audio 参数：
+
+```bash
+RUNNER=/home/unitree/g1_audio_tests/speaker_loud_music/build/g1_speaker_loud_music_runner
+
+./vigil_bridge start \
+  --max-speed-mps 2 \
+  --camera-required \
+  --with-tts \
+  --audio-advertise-always \
+  --audio-ws \
+  --audio-ws-port 8766 \
+  --audio-mic-interface-ip 192.168.123.164 \
+  --audio-speaker-iface enP8p1s0 \
+  --audio-speaker-runner "$RUNNER" \
+  --attach
+```
+
+`--with-tts` 是 `--audio-enabled` 的别名；TTS endpoint 是
+`/audio/tts`。真实 G1 喇叭/TTS 输出需要 `--audio-speaker-runner`。
+
 常用管理命令：
 
 ```bash
