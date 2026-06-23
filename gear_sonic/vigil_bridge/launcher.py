@@ -113,6 +113,58 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Do not call /reset_episode after the bridge HTTP port is up.",
     )
     start_parser.add_argument("--camera-required", action="store_true", help="Require real camera payload.")
+    audio_group = start_parser.add_argument_group("audio/TTS")
+    audio_group.add_argument(
+        "--audio-enabled",
+        "--with-audio",
+        "--with-tts",
+        dest="audio_enabled",
+        action="store_true",
+        help="Enable bridge audio I/O and native TTS endpoints.",
+    )
+    audio_group.add_argument(
+        "--audio-advertise-always",
+        action="store_true",
+        help="Advertise audio capabilities to all clients, not only clients that request audio.",
+    )
+    audio_group.add_argument("--audio-mic-group", default="239.168.123.161", help="G1 microphone multicast group.")
+    audio_group.add_argument("--audio-mic-port", type=int, default=5555, help="G1 microphone multicast UDP port.")
+    audio_group.add_argument(
+        "--audio-mic-interface-ip",
+        default=None,
+        help="Local 192.168.123.x IP used to join microphone multicast. Defaults to INADDR_ANY.",
+    )
+    audio_group.add_argument(
+        "--audio-segment-max-s",
+        type=float,
+        default=10.0,
+        help="Maximum HTTP audio segment duration in seconds.",
+    )
+    audio_group.add_argument("--audio-speaker-volume", type=int, default=100, help="G1 speaker API volume.")
+    audio_group.add_argument(
+        "--audio-speaker-peak-target",
+        type=int,
+        default=27800,
+        help="PCM16 peak target used before G1 PlayStream at volume 100.",
+    )
+    audio_group.add_argument(
+        "--audio-speaker-runner",
+        default=None,
+        help="External G1 speaker/TTS runner executable used for real speaker output.",
+    )
+    audio_group.add_argument(
+        "--audio-speaker-iface",
+        default=None,
+        help="Optional Unitree DDS interface for the external speaker runner.",
+    )
+    audio_group.add_argument(
+        "--audio-fake-speaker",
+        action="store_true",
+        help="Use a fake speaker client for dry bridge tests instead of hardware playback.",
+    )
+    audio_group.add_argument("--audio-ws", action="store_true", help="Start optional full-duplex audio WebSocket server.")
+    audio_group.add_argument("--audio-ws-host", default=None, help="Audio WebSocket bind host. Defaults to --bridge-host.")
+    audio_group.add_argument("--audio-ws-port", type=int, default=8766, help="Audio WebSocket bind port.")
     start_parser.add_argument("--attach", action="store_true", help="Attach to the tmux session after starting.")
 
     stop_parser = subparsers.add_parser("stop", help="Halt bridge/deploy and stop the tmux session.")
@@ -384,6 +436,7 @@ def _bridge_script(args: argparse.Namespace, policy_log: Path, bridge_log: Path)
         bridge_args.append("--auto-start-control")
     if not args.camera_required:
         bridge_args.append("--real-camera-optional")
+    bridge_args.extend(_audio_bridge_args(args))
 
     quoted_bridge_cmd = " ".join(shlex.quote(part) for part in bridge_args)
     reset_block = ""
@@ -468,6 +521,61 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         raise SystemExit("--pause-settle-time must be >= 0")
     if args.camera_port <= 0:
         raise SystemExit("--camera-port must be positive")
+    if not args.audio_enabled and (
+        args.audio_advertise_always
+        or args.audio_mic_interface_ip
+        or args.audio_speaker_runner
+        or args.audio_speaker_iface
+        or args.audio_fake_speaker
+        or args.audio_ws
+    ):
+        raise SystemExit("audio options require --audio-enabled, --with-audio, or --with-tts")
+    if args.audio_mic_port <= 0:
+        raise SystemExit("--audio-mic-port must be positive")
+    if args.audio_segment_max_s <= 0.0:
+        raise SystemExit("--audio-segment-max-s must be positive")
+    if not 1 <= args.audio_speaker_volume <= 100:
+        raise SystemExit("--audio-speaker-volume must be in 1..100")
+    if not 1 <= args.audio_speaker_peak_target <= 32767:
+        raise SystemExit("--audio-speaker-peak-target must be in 1..32767")
+    if args.audio_ws_port <= 0:
+        raise SystemExit("--audio-ws-port must be positive")
+    if args.audio_ws_host and not args.audio_ws:
+        raise SystemExit("--audio-ws-host requires --audio-ws")
+
+
+def _audio_bridge_args(args: argparse.Namespace) -> list[str]:
+    if not args.audio_enabled:
+        return []
+
+    bridge_args = [
+        "--audio-enabled",
+        "--audio-mic-group",
+        args.audio_mic_group,
+        "--audio-mic-port",
+        str(args.audio_mic_port),
+        "--audio-segment-max-s",
+        str(args.audio_segment_max_s),
+        "--audio-speaker-volume",
+        str(args.audio_speaker_volume),
+        "--audio-speaker-peak-target",
+        str(args.audio_speaker_peak_target),
+    ]
+    if args.audio_advertise_always:
+        bridge_args.append("--audio-advertise-always")
+    if args.audio_mic_interface_ip:
+        bridge_args.extend(["--audio-mic-interface-ip", args.audio_mic_interface_ip])
+    if args.audio_speaker_runner:
+        bridge_args.extend(["--audio-speaker-runner", args.audio_speaker_runner])
+    if args.audio_speaker_iface:
+        bridge_args.extend(["--audio-speaker-iface", args.audio_speaker_iface])
+    if args.audio_fake_speaker:
+        bridge_args.append("--audio-fake-speaker")
+    if args.audio_ws:
+        bridge_args.extend(["--audio-ws", "--audio-ws-port", str(args.audio_ws_port)])
+        if args.audio_ws_host:
+            bridge_args.extend(["--audio-ws-host", args.audio_ws_host])
+    return bridge_args
 
 
 def _write_script(path: Path, content: str) -> None:
