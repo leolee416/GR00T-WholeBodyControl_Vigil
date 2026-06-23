@@ -166,6 +166,25 @@ def test_audio_tts_segments_mixed_language_text() -> None:
     )
 
     assert response["ok"] is True
+    assert response["speaker_id"] == 0
+    assert response["telemetry"]["segmentation"] == "auto"
+    assert response["telemetry"]["segments"] == [
+        {"text": "你好 G1 hello 世界", "language": "zh", "speaker_id": 0, "text_chars": 14}
+    ]
+    assert speaker.tts_count == 1
+
+
+def test_audio_tts_strict_segmentation_splits_mixed_language_text() -> None:
+    speaker = FakeSpeakerClient()
+    manager = AudioSessionManager(AudioBridgeConfig(enabled=True, fake_speaker=True), speaker_client=speaker)
+    service = VigilBridgeService(audio_manager=manager)
+
+    response = BridgeRequestRouter(service).dispatch(
+        "audio/tts",
+        {"text": "你好 G1 hello 世界", "segmentation": "strict"},
+    )
+
+    assert response["ok"] is True
     assert response["segment_count"] == 3
     assert response["segments"] == [
         {"text": "你好", "language": "zh", "speaker_id": 0, "text_chars": 2},

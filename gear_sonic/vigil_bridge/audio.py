@@ -614,23 +614,25 @@ class AudioSessionManager:
     def tts(self, payload: Mapping[str, Any] | None = None) -> JSONDict:
         if not self.config.enabled:
             return self._disabled("audio is disabled; start bridge with --audio-enabled")
+        raw_payload = dict(payload or {})
         try:
             text, language, speaker_id = self._parse_tts_payload(payload or {})
+            segmentation = _normalize_tts_segmentation(raw_payload.get("segmentation"))
         except ValueError as exc:
             return {
                 "ok": False,
                 "error_message": str(exc),
                 "telemetry": {"tts": self._tts_capabilities()},
             }
-        raw_payload = dict(payload or {})
         explicit_speaker_id = raw_payload.get("speaker_id") is not None
-        segments = _tts_text_segments(text, language, speaker_id if explicit_speaker_id else None)
+        segments = _tts_text_segments(text, language, speaker_id if explicit_speaker_id else None, segmentation)
         telemetry: JSONDict = {
             "method": "native_segmented" if len(segments) > 1 else "native",
             "language": language,
             "speaker_id": speaker_id,
             "text_chars": len(text),
             "text_max_chars": self.config.tts_text_max_chars,
+            "segmentation": segmentation,
             "segments": [segment.as_payload() for segment in segments],
             "native_loudness_calibrated": False,
             "volume_model": "AudioClient.TtsMaker does not expose PCM gain; speaker_peak_target is not applied",
@@ -912,9 +914,16 @@ def _looks_like_english(text: str) -> bool:
     return bool(letters) and all(ord(char) < 128 for char in letters)
 
 
-def _tts_text_segments(text: str, default_language: str, forced_speaker_id: int | None = None) -> list[TtsTextSegment]:
+def _tts_text_segments(
+    text: str,
+    default_language: str,
+    forced_speaker_id: int | None = None,
+    segmentation: str = "auto",
+) -> list[TtsTextSegment]:
     if forced_speaker_id is not None:
         return [TtsTextSegment(text=text, language=default_language, speaker_id=forced_speaker_id)]
+    if segmentation == "none":
+        return [TtsTextSegment(text=text, language=default_language, speaker_id=TTS_SPEAKER_IDS[default_language])]
 
     segments: list[TtsTextSegment] = []
     current_language: str | None = None
@@ -948,7 +957,9 @@ def _tts_text_segments(text: str, default_language: str, forced_speaker_id: int 
     flush()
     if not segments:
         return [TtsTextSegment(text=text, language=default_language, speaker_id=TTS_SPEAKER_IDS[default_language])]
-    return segments
+    if segmentation == "strict":
+        return segments
+    return _merge_short_embedded_english_segments(segments)
 
 
 def _tts_char_language(char: str) -> str | None:
@@ -966,6 +977,80 @@ def _tts_char_language(char: str) -> str | None:
     if char.isascii() and char.isalnum():
         return "en"
     return None
+
+
+def _merge_short_embedded_english_segments(segments: list[TtsTextSegment]) -> list[TtsTextSegment]:
+    merged: list[TtsTextSegment] = []
+    for index, segment in enumerate(segments):
+        if segment.language == "en" and _is_short_embedded_english(segments, index):
+            segment = TtsTextSegment(text=segment.text, language="zh", speaker_id=TTS_SPEAKER_IDS["zh"])
+        if merged and merged[-1].language == segment.language:
+            previous = merged[-1]
+            merged[-1] = TtsTextSegment(
+                text=_join_tts_segment_text(previous.text, segment.text),
+                language=previous.language,
+                speaker_id=previous.speaker_id,
+            )
+            continue
+        merged.append(segment)
+    return merged
+
+
+def _is_short_embedded_english(segments: list[TtsTextSegment], index: int) -> bool:
+    has_left_zh = any(segment.language == "zh" for segment in segments[:index])
+    has_right_zh = any(segment.language == "zh" for segment in segments[index + 1 :])
+    if not (has_left_zh or has_right_zh):
+        return False
+    tokens = _ascii_alnum_tokens(segments[index].text)
+    if not tokens:
+        return False
+    return len(tokens) <= 4 and sum(len(token) for token in tokens) <= 24
+
+
+def _ascii_alnum_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    for char in text:
+        if char.isascii() and char.isalnum():
+            current.append(char)
+            continue
+        if current:
+            tokens.append("".join(current))
+            current = []
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def _join_tts_segment_text(left: str, right: str) -> str:
+    if not left:
+        return right
+    if not right:
+        return left
+    if left[-1].isspace() or right[0].isspace():
+        return left + right
+    if _tts_char_language(left[-1]) == "en" or _tts_char_language(right[0]) == "en":
+        return left + " " + right
+    return left + right
+
+
+def _normalize_tts_segmentation(value: Any) -> str:
+    if value is None:
+        return "auto"
+    normalized = str(value).strip().lower().replace("_", "-")
+    aliases = {
+        "auto": "auto",
+        "smart": "auto",
+        "strict": "strict",
+        "split": "strict",
+        "none": "none",
+        "off": "none",
+        "disabled": "none",
+    }
+    segmentation = aliases.get(normalized)
+    if segmentation is None:
+        raise ValueError("TTS segmentation must be one of: auto, strict, none")
+    return segmentation
 
 
 def _volume_safety_flag(volume: int) -> str:
