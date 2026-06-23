@@ -1,5 +1,10 @@
 """Dry-run GR00T-side bridge primitives for Vigil integration."""
 
+from gear_sonic.vigil_bridge.audio import (
+    AudioBridgeConfig,
+    AudioSessionManager,
+    FakeSpeakerClient,
+)
 from gear_sonic.vigil_bridge.primitive_executor import (
     DryRunPrimitiveExecutor,
     FakePrimitiveExecutor,
@@ -21,9 +26,12 @@ from gear_sonic.vigil_bridge.service import VigilBridgeService
 from gear_sonic.vigil_bridge.transport import BridgeRequestRouter, create_http_server, serve_http
 
 __all__ = [
+    "AudioBridgeConfig",
+    "AudioSessionManager",
     "BridgeRequestRouter",
     "DryRunPrimitiveExecutor",
     "FakePrimitiveExecutor",
+    "FakeSpeakerClient",
     "FakeSensorProvider",
     "MujocoBridgeConfig",
     "MujocoPrimitiveExecutor",

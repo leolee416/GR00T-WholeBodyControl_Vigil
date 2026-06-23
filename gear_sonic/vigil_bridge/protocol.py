@@ -18,6 +18,24 @@ SUPPORTED_ACTIONS = [
     "navigate.turn_right",
 ]
 SUPPORTED_OBSERVATIONS = ["rgb", "depth", "robot_state"]
+AUDIO_CAPABILITIES: JSONDict = {
+    "enabled": False,
+    "input": ["pcm16_16k_mono_stream", "pcm16_16k_mono_segment"],
+    "output": ["pcm16_16k_mono_stream", "pcm16_16k_mono_segment", "native_tts_text"],
+    "transport": ["websocket", "http_segment_fallback"],
+    "sample_rate": 16000,
+    "channels": 1,
+    "sample_width": 2,
+    "speaker_volume": 100,
+    "speaker_peak_target": 27800,
+    "tts": {
+        "languages": ["zh", "en"],
+        "speaker_ids": {"zh": 0, "en": 1},
+        "text_max_chars": 500,
+        "native_loudness_calibrated": False,
+        "calibrated_output_path": "/audio/output_segment",
+    },
+}
 ORACLE_SOURCE = "none"
 
 
@@ -29,12 +47,14 @@ class ClientInfo(TypedDict, total=False):
 class RequiredCapabilities(TypedDict, total=False):
     actions: list[str]
     observation: list[str]
+    audio: JSONDict
     oracle_source: str
 
 
-class BridgeCapabilities(TypedDict):
+class BridgeCapabilities(TypedDict, total=False):
     actions: list[str]
     observation: list[str]
+    audio: JSONDict
     oracle_source: str
 
 
@@ -118,4 +138,16 @@ class RuntimeHealth(TypedDict, total=False):
     executor_started: bool
     sensor_connected: bool
     error_message: str | None
+    telemetry: JSONDict
+
+
+class AudioResponse(TypedDict, total=False):
+    ok: bool
+    error_message: str | None
+    session_id: str
+    encoding: str
+    data: str
+    duration_s: float
+    format: JSONDict
+    audio_stats: JSONDict
     telemetry: JSONDict

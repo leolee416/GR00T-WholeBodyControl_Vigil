@@ -68,6 +68,20 @@ class BridgeRequestRouter:
                     "version": BRIDGE_VERSION,
                 },
             }
+        if route == "audio/health":
+            return self.service.get_audio_health()
+        if route == "audio/session/start":
+            return self.service.start_audio_session(request_payload)
+        if route == "audio/session/stop":
+            return self.service.stop_audio_session(request_payload)
+        if route == "audio/input_segment":
+            return self.service.get_audio_input_segment(request_payload)
+        if route == "audio/output_segment":
+            return self.service.play_audio_output_segment(request_payload)
+        if route == "audio/tts":
+            return self.service.play_audio_tts(request_payload)
+        if route == "audio/output_stop":
+            return self.service.stop_audio_output()
 
         return {
             "ok": False,
@@ -89,6 +103,9 @@ def create_http_server(
         def do_GET(self) -> None:
             if self.path.rstrip("/") == "/health":
                 self._write_json(HTTPStatus.OK, router.dispatch("health", {}))
+                return
+            if self.path.rstrip("/") == "/audio/health":
+                self._write_json(HTTPStatus.OK, router.dispatch("audio/health", {}))
                 return
             self._write_json(
                 HTTPStatus.NOT_FOUND,
@@ -182,4 +199,11 @@ def _known_routes() -> set[str]:
         "resume",
         "close",
         "health",
+        "audio/health",
+        "audio/session/start",
+        "audio/session/stop",
+        "audio/input_segment",
+        "audio/output_segment",
+        "audio/tts",
+        "audio/output_stop",
     }

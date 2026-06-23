@@ -5,10 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from gear_sonic.vigil_bridge.audio import AudioSessionManager
 from gear_sonic.vigil_bridge.primitive_executor import DryRunPrimitiveExecutor
 from gear_sonic.vigil_bridge.protocol import (
+    AUDIO_CAPABILITIES,
     BRIDGE_NAME,
     BRIDGE_VERSION,
+    AudioResponse,
     ExecuteActionResponse,
     HandshakeResponse,
     ObservationResponse,
@@ -29,6 +32,8 @@ class VigilBridgeService:
 
     executor: DryRunPrimitiveExecutor | None = None
     sensor_provider: FakeSensorProvider | None = None
+    audio_manager: AudioSessionManager | None = None
+    audio_advertise_always: bool = False
     runtime_mode: str = "dry_run"
     _closed: bool = False
 
@@ -40,16 +45,19 @@ class VigilBridgeService:
 
     def handshake(self, payload: dict[str, Any]) -> HandshakeResponse:
         self._set_runtime_mode(str(payload["runtime_mode"]))
+        capabilities = {
+            "actions": list(SUPPORTED_ACTIONS),
+            "observation": list(SUPPORTED_OBSERVATIONS),
+            "oracle_source": ORACLE_SOURCE,
+        }
+        if self._should_advertise_audio(payload):
+            capabilities["audio"] = self._audio_capabilities()
         return {
             "ok": True,
             "error_message": None,
             "protocol_version": PROTOCOL_VERSION,
             "runtime_mode": self.runtime_mode,
-            "capabilities": {
-                "actions": list(SUPPORTED_ACTIONS),
-                "observation": list(SUPPORTED_OBSERVATIONS),
-                "oracle_source": ORACLE_SOURCE,
-            },
+            "capabilities": capabilities,
             "bridge": {
                 "name": BRIDGE_NAME,
                 "version": BRIDGE_VERSION,
@@ -167,6 +175,8 @@ class VigilBridgeService:
 
     def halt(self) -> RuntimeHealth:
         assert self.executor is not None
+        if self.audio_manager is not None:
+            self.audio_manager.stop_output()
         return self.executor.halt()
 
     def pause(self) -> RuntimeHealth:
@@ -185,6 +195,8 @@ class VigilBridgeService:
 
     def close(self) -> None:
         if not self._closed:
+            if self.audio_manager is not None:
+                self.audio_manager.close()
             assert self.executor is not None
             executor_close = getattr(self.executor, "close", None)
             if callable(executor_close):
@@ -192,6 +204,41 @@ class VigilBridgeService:
             else:
                 self.halt()
         self._closed = True
+
+    def get_audio_health(self) -> AudioResponse:
+        if self.audio_manager is None:
+            return self._audio_unavailable()
+        return self.audio_manager.health()
+
+    def start_audio_session(self, payload: Mapping[str, Any] | None = None) -> AudioResponse:
+        if self.audio_manager is None:
+            return self._audio_unavailable()
+        return self.audio_manager.start_session(payload)
+
+    def stop_audio_session(self, payload: Mapping[str, Any] | None = None) -> AudioResponse:
+        if self.audio_manager is None:
+            return self._audio_unavailable()
+        return self.audio_manager.stop_session(payload)
+
+    def get_audio_input_segment(self, payload: Mapping[str, Any] | None = None) -> AudioResponse:
+        if self.audio_manager is None:
+            return self._audio_unavailable()
+        return self.audio_manager.input_segment(payload)
+
+    def play_audio_output_segment(self, payload: Mapping[str, Any] | None = None) -> AudioResponse:
+        if self.audio_manager is None:
+            return self._audio_unavailable()
+        return self.audio_manager.output_segment(payload)
+
+    def play_audio_tts(self, payload: Mapping[str, Any] | None = None) -> AudioResponse:
+        if self.audio_manager is None:
+            return self._audio_unavailable()
+        return self.audio_manager.tts(payload)
+
+    def stop_audio_output(self) -> AudioResponse:
+        if self.audio_manager is None:
+            return self._audio_unavailable()
+        return self.audio_manager.stop_output()
 
     def _set_runtime_mode(self, runtime_mode: str) -> None:
         self.runtime_mode = runtime_mode
@@ -203,7 +250,35 @@ class VigilBridgeService:
     def _runtime_health(self) -> RuntimeHealth:
         assert self.executor is not None
         assert self.sensor_provider is not None
-        return self.executor.get_health(sensor_connected=self.sensor_provider.connected)
+        health = self.executor.get_health(sensor_connected=self.sensor_provider.connected)
+        telemetry = dict(health.get("telemetry", {}))
+        if self.audio_manager is not None:
+            telemetry["audio"] = self._audio_capabilities()
+        health["telemetry"] = telemetry
+        return health
+
+    def _audio_capabilities(self) -> dict[str, Any]:
+        if self.audio_manager is None:
+            return dict(AUDIO_CAPABILITIES)
+        return self.audio_manager.capabilities()
+
+    def _should_advertise_audio(self, payload: Mapping[str, Any]) -> bool:
+        if self.audio_advertise_always:
+            return True
+        if bool(payload.get("include_audio_capabilities", False)):
+            return True
+        required_capabilities = payload.get("required_capabilities")
+        return isinstance(required_capabilities, Mapping) and "audio" in required_capabilities
+
+    @staticmethod
+    def _audio_unavailable() -> AudioResponse:
+        return {
+            "ok": False,
+            "error_message": "audio manager is not configured",
+            "telemetry": {
+                "audio": dict(AUDIO_CAPABILITIES),
+            },
+        }
 
     def _reset_error(self, error_message: str) -> ResetEpisodeResponse:
         return {

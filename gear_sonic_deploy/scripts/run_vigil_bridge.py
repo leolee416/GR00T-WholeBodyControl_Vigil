@@ -12,6 +12,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from gear_sonic.vigil_bridge import VigilBridgeService
+from gear_sonic.vigil_bridge.audio import AudioBridgeConfig, AudioSessionManager
+from gear_sonic.vigil_bridge.audio_ws import AudioWebSocketServer
 from gear_sonic.vigil_bridge.mujoco_adapter import (
     MujocoBridgeConfig,
     create_mujoco_bridge_service,
@@ -106,19 +108,69 @@ def main() -> None:
         action="store_true",
         help="Also send deploy stop=True on /halt. Off by default because it can terminate deploy.",
     )
+    parser.add_argument("--audio-enabled", action="store_true", help="Enable bridge audio I/O endpoints.")
+    parser.add_argument(
+        "--audio-advertise-always",
+        action="store_true",
+        help="Advertise audio capabilities to all clients. Default only advertises when requested in handshake.",
+    )
+    parser.add_argument("--audio-mic-group", default="239.168.123.161", help="G1 microphone multicast group.")
+    parser.add_argument("--audio-mic-port", type=int, default=5555, help="G1 microphone multicast UDP port.")
+    parser.add_argument(
+        "--audio-mic-interface-ip",
+        default=None,
+        help="Local 192.168.123.x IP to join microphone multicast. Defaults to INADDR_ANY.",
+    )
+    parser.add_argument(
+        "--audio-segment-max-s",
+        type=float,
+        default=10.0,
+        help="Maximum HTTP audio segment duration in seconds.",
+    )
+    parser.add_argument("--audio-speaker-volume", type=int, default=100, help="G1 speaker API volume.")
+    parser.add_argument(
+        "--audio-speaker-peak-target",
+        type=int,
+        default=27800,
+        help="PCM16 peak target used before speaker PlayStream at volume 100.",
+    )
+    parser.add_argument(
+        "--audio-speaker-runner",
+        default=None,
+        help="Optional external G1 PlayStream runner path for speaker output.",
+    )
+    parser.add_argument(
+        "--audio-speaker-iface",
+        default=None,
+        help="Optional Unitree DDS interface for the external speaker runner.",
+    )
+    parser.add_argument(
+        "--audio-fake-speaker",
+        action="store_true",
+        help="Use a fake speaker client for bridge tests instead of hardware playback.",
+    )
+    parser.add_argument("--audio-ws", action="store_true", help="Start optional WebSocket audio stream server.")
+    parser.add_argument("--audio-ws-host", default=None, help="Audio WebSocket bind host. Defaults to --host.")
+    parser.add_argument("--audio-ws-port", type=int, default=8766, help="Audio WebSocket bind port.")
     parser.add_argument("--verbose", action="store_true", help="Print MuJoCo bridge transport details.")
     args = parser.parse_args()
-    serve_http(
-        host=args.host,
-        port=args.port,
-        runtime_mode=_runtime_mode(args),
-        service_factory=lambda: _create_service(args),
-    )
+    service = _create_service(args)
+    audio_ws_server = _start_audio_ws_if_requested(args, service)
+    try:
+        serve_http(
+            host=args.host,
+            port=args.port,
+            runtime_mode=_runtime_mode(args),
+            service_factory=lambda: service,
+        )
+    finally:
+        if audio_ws_server is not None:
+            audio_ws_server.stop()
 
 
 def _create_service(args: argparse.Namespace) -> VigilBridgeService:
     if args.backend == "mujoco":
-        return create_mujoco_bridge_service(
+        service = create_mujoco_bridge_service(
             MujocoBridgeConfig(
                 runtime_mode=_runtime_mode(args),
                 command_bind_host=args.command_bind_host,
@@ -150,8 +202,9 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
                 verbose=args.verbose,
             )
         )
+        return _attach_audio(args, service)
     if args.backend == "real":
-        return create_real_bridge_service(
+        service = create_real_bridge_service(
             RealBridgeConfig(
                 runtime_mode=_runtime_mode(args),
                 command_bind_host=args.command_bind_host,
@@ -184,7 +237,8 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
                 verbose=args.verbose,
             )
         )
-    return VigilBridgeService(runtime_mode=_runtime_mode(args))
+        return _attach_audio(args, service)
+    return _attach_audio(args, VigilBridgeService(runtime_mode=_runtime_mode(args)))
 
 
 def _runtime_mode(args: argparse.Namespace) -> str:
@@ -193,6 +247,49 @@ def _runtime_mode(args: argparse.Namespace) -> str:
     if args.backend in {"mujoco", "real"}:
         return args.backend
     return "dry_run"
+
+
+def _attach_audio(args: argparse.Namespace, service: VigilBridgeService) -> VigilBridgeService:
+    if args.audio_enabled:
+        service.audio_manager = AudioSessionManager(
+            AudioBridgeConfig(
+                enabled=True,
+                runtime_mode=_runtime_mode(args),
+                mic_group=args.audio_mic_group,
+                mic_port=args.audio_mic_port,
+                mic_interface_ip=args.audio_mic_interface_ip,
+                segment_max_s=args.audio_segment_max_s,
+                speaker_volume=args.audio_speaker_volume,
+                speaker_peak_target=args.audio_speaker_peak_target,
+                speaker_runner=args.audio_speaker_runner,
+                speaker_iface=args.audio_speaker_iface,
+                fake_speaker=args.audio_fake_speaker or (
+                    args.backend == "dry_run" and not args.audio_speaker_runner
+                ),
+            )
+        )
+    service.audio_advertise_always = bool(args.audio_advertise_always)
+    return service
+
+
+def _start_audio_ws_if_requested(
+    args: argparse.Namespace,
+    service: VigilBridgeService,
+) -> AudioWebSocketServer | None:
+    if not args.audio_ws:
+        return None
+    if service.audio_manager is None:
+        print("Audio WebSocket requested but --audio-enabled is not set; skipping.", file=sys.stderr)
+        return None
+    server = AudioWebSocketServer(
+        manager=service.audio_manager,
+        host=args.audio_ws_host or args.host,
+        port=args.audio_ws_port,
+    )
+    health = server.start()
+    if not health.get("ok", False):
+        print(f"Audio WebSocket unavailable: {health.get('error_message')}", file=sys.stderr)
+    return server
 
 
 if __name__ == "__main__":
