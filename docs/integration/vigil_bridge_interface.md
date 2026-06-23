@@ -269,7 +269,10 @@ AGENT/VLT OMNI PCM chunks
 Streaming 是主路径。几十秒整段音频只作为 fallback/debug，因为它至少会增加“录满音频 + 上传/解码 + 播放排队”的延迟，不适合实时对话。
 
 Native TTS 是独立的 HTTP fallback 输出，不经过 OMNI PCM 流。Host/VLT 发送文本后，
-bridge 在 G1 侧调用 `AudioClient.TtsMaker(text, speaker_id)`。默认映射：
+bridge 在 G1 侧调用 `AudioClient.TtsMaker(text, speaker_id)`。默认
+`segmentation=auto` 会把短英文 token 保留在相邻中文段里，减少多次 native
+TTS 调用造成的停顿；需要强制按中英文切段时，请在 `/audio/tts` payload 中传
+`"segmentation":"strict"`。默认 speaker 映射：
 
 | language | speaker_id |
 | --- | --- |
