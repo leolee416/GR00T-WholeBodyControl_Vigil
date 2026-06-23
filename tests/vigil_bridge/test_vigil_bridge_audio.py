@@ -140,7 +140,7 @@ def test_audio_tts_maps_languages_to_fake_speaker_ids() -> None:
 
     zh_response = BridgeRequestRouter(service).dispatch(
         "audio/tts",
-        {"text": "你好，这是 G1 TTS 测试。", "language": "zh"},
+        {"text": "你好，这是中文语音测试。", "language": "zh"},
     )
     en_response = BridgeRequestRouter(service).dispatch(
         "audio/tts",
@@ -153,6 +153,45 @@ def test_audio_tts_maps_languages_to_fake_speaker_ids() -> None:
     assert en_response["ok"] is True
     assert en_response["speaker_id"] == 1
     assert speaker.tts_count == 2
+
+
+def test_audio_tts_segments_mixed_language_text() -> None:
+    speaker = FakeSpeakerClient()
+    manager = AudioSessionManager(AudioBridgeConfig(enabled=True, fake_speaker=True), speaker_client=speaker)
+    service = VigilBridgeService(audio_manager=manager)
+
+    response = BridgeRequestRouter(service).dispatch(
+        "audio/tts",
+        {"text": "你好 G1 hello 世界"},
+    )
+
+    assert response["ok"] is True
+    assert response["segment_count"] == 3
+    assert response["segments"] == [
+        {"text": "你好", "language": "zh", "speaker_id": 0, "text_chars": 2},
+        {"text": "G1 hello", "language": "en", "speaker_id": 1, "text_chars": 8},
+        {"text": "世界", "language": "zh", "speaker_id": 0, "text_chars": 2},
+    ]
+    assert [item["segment"]["speaker_id"] for item in response["results"]] == [0, 1, 0]
+    assert speaker.tts_count == 3
+
+
+def test_audio_tts_explicit_speaker_id_disables_segmentation() -> None:
+    speaker = FakeSpeakerClient()
+    manager = AudioSessionManager(AudioBridgeConfig(enabled=True, fake_speaker=True), speaker_client=speaker)
+    service = VigilBridgeService(audio_manager=manager)
+
+    response = BridgeRequestRouter(service).dispatch(
+        "audio/tts",
+        {"text": "你好 G1 hello 世界", "speaker_id": 0},
+    )
+
+    assert response["ok"] is True
+    assert response["speaker_id"] == 0
+    assert response["telemetry"]["segments"] == [
+        {"text": "你好 G1 hello 世界", "language": "zh", "speaker_id": 0, "text_chars": 14}
+    ]
+    assert speaker.tts_count == 1
 
 
 def test_audio_tts_rejects_empty_text() -> None:

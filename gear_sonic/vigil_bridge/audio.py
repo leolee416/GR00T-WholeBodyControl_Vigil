@@ -69,6 +69,23 @@ class AudioFrame:
     pcm: bytes
 
 
+@dataclass(frozen=True)
+class TtsTextSegment:
+    """A native TTS text segment bound to one G1 speaker voice."""
+
+    text: str
+    language: str
+    speaker_id: int
+
+    def as_payload(self) -> JSONDict:
+        return {
+            "text": self.text,
+            "language": self.language,
+            "speaker_id": self.speaker_id,
+            "text_chars": len(self.text),
+        }
+
+
 @dataclass
 class AudioRingBuffer:
     """Bounded audio frame buffer with optional streaming subscribers."""
@@ -605,18 +622,25 @@ class AudioSessionManager:
                 "error_message": str(exc),
                 "telemetry": {"tts": self._tts_capabilities()},
             }
+        raw_payload = dict(payload or {})
+        explicit_speaker_id = raw_payload.get("speaker_id") is not None
+        segments = _tts_text_segments(text, language, speaker_id if explicit_speaker_id else None)
         telemetry: JSONDict = {
-            "method": "native",
+            "method": "native_segmented" if len(segments) > 1 else "native",
             "language": language,
             "speaker_id": speaker_id,
             "text_chars": len(text),
             "text_max_chars": self.config.tts_text_max_chars,
+            "segments": [segment.as_payload() for segment in segments],
             "native_loudness_calibrated": False,
             "volume_model": "AudioClient.TtsMaker does not expose PCM gain; speaker_peak_target is not applied",
             "calibrated_output_path": "/audio/output_segment",
         }
         assert self.speaker_client is not None
-        return self.speaker_client.tts(text, speaker_id, self.config, telemetry)
+        if len(segments) == 1:
+            segment = segments[0]
+            return self.speaker_client.tts(segment.text, segment.speaker_id, self.config, telemetry)
+        return self._tts_segmented(segments, telemetry)
 
     def stop_output(self) -> JSONDict:
         assert self.speaker_client is not None
@@ -694,6 +718,41 @@ class AudioSessionManager:
             if speaker_id < 0 or speaker_id > 255:
                 raise ValueError("TTS speaker_id must be in 0..255")
         return text, language, speaker_id
+
+    def _tts_segmented(self, segments: list["TtsTextSegment"], telemetry: JSONDict) -> JSONDict:
+        assert self.speaker_client is not None
+        results: list[JSONDict] = []
+        ok = True
+        error_message = None
+        for index, segment in enumerate(segments):
+            segment_telemetry = dict(telemetry)
+            segment_telemetry.update(
+                {
+                    "segment_index": index,
+                    "segment_count": len(segments),
+                    "language": segment.language,
+                    "speaker_id": segment.speaker_id,
+                    "text_chars": len(segment.text),
+                }
+            )
+            result = self.speaker_client.tts(segment.text, segment.speaker_id, self.config, segment_telemetry)
+            result["segment"] = segment.as_payload()
+            results.append(result)
+            if not bool(result.get("ok", False)):
+                ok = False
+                error_message = str(result.get("error_message") or f"TTS segment {index} failed")
+                break
+        return {
+            "ok": ok,
+            "error_message": error_message,
+            "speaker": results[-1].get("speaker") if results else type(self.speaker_client).__name__,
+            "segment_count": len(segments),
+            "segments": [segment.as_payload() for segment in segments],
+            "results": results,
+            "text_chars": int(telemetry["text_chars"]),
+            "volume": self.config.speaker_volume,
+            "telemetry": telemetry,
+        }
 
     @staticmethod
     def _disabled(message: str) -> JSONDict:
@@ -851,6 +910,62 @@ def _normalize_tts_language(value: Any, text: str) -> str:
 def _looks_like_english(text: str) -> bool:
     letters = [char for char in text if char.isalpha()]
     return bool(letters) and all(ord(char) < 128 for char in letters)
+
+
+def _tts_text_segments(text: str, default_language: str, forced_speaker_id: int | None = None) -> list[TtsTextSegment]:
+    if forced_speaker_id is not None:
+        return [TtsTextSegment(text=text, language=default_language, speaker_id=forced_speaker_id)]
+
+    segments: list[TtsTextSegment] = []
+    current_language: str | None = None
+    current_chars: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_language, current_chars
+        segment_text = "".join(current_chars).strip()
+        if segment_text:
+            language = current_language or default_language
+            segments.append(
+                TtsTextSegment(
+                    text=segment_text,
+                    language=language,
+                    speaker_id=TTS_SPEAKER_IDS[language],
+                )
+            )
+        current_language = None
+        current_chars = []
+
+    for char in text:
+        language = _tts_char_language(char)
+        if language is None:
+            if current_chars:
+                current_chars.append(char)
+            continue
+        if current_language is not None and language != current_language:
+            flush()
+        current_language = language
+        current_chars.append(char)
+    flush()
+    if not segments:
+        return [TtsTextSegment(text=text, language=default_language, speaker_id=TTS_SPEAKER_IDS[default_language])]
+    return segments
+
+
+def _tts_char_language(char: str) -> str | None:
+    codepoint = ord(char)
+    if (
+        0x3400 <= codepoint <= 0x4DBF
+        or 0x4E00 <= codepoint <= 0x9FFF
+        or 0xF900 <= codepoint <= 0xFAFF
+        or 0x20000 <= codepoint <= 0x2A6DF
+        or 0x2A700 <= codepoint <= 0x2B73F
+        or 0x2B740 <= codepoint <= 0x2B81F
+        or 0x2B820 <= codepoint <= 0x2CEAF
+    ):
+        return "zh"
+    if char.isascii() and char.isalnum():
+        return "en"
+    return None
 
 
 def _volume_safety_flag(volume: int) -> str:
