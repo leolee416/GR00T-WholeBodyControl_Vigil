@@ -141,6 +141,50 @@ class DryRunPrimitiveExecutor:
             {"skill_name": str(skill_name or "")},
         )
 
+    def send_sonic_planner_command(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
+        command = dict(payload.get("command") or {})
+        executed = {
+            "primitive": "sonic_planner_command",
+            "mode": int(command.get("mode", 0)),
+            "movement_direction": list(command.get("movement_direction", [0.0, 0.0, 0.0])),
+            "facing_direction": list(command.get("facing_direction", [1.0, 0.0, 0.0])),
+            "speed": float(command.get("speed", -1.0)),
+            "height": float(command.get("height", -1.0)),
+            "frame": str(command.get("frame", "robot")),
+            "duration_s": float(payload.get("duration_s", 0.0)),
+            "stop_after": bool(payload.get("stop_after", False)),
+        }
+        return self._success(
+            executed_arguments=executed,
+            telemetry={
+                "motion": "sonic_planner_command",
+                "sonic_input": "planner_command",
+                "estimated_duration_s": executed["duration_s"],
+            },
+        )
+
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
+        frames = payload.get("frames")
+        frame_count = 0
+        if isinstance(frames, Mapping):
+            joint_pos = frames.get("joint_pos")
+            if isinstance(joint_pos, list):
+                frame_count = len(joint_pos)
+        executed = {
+            "primitive": "sonic_reference_motion",
+            "motion_name": str(payload.get("motion_name", "")),
+            "duration_s": float(payload.get("duration_s", 0.0)),
+            "frame_count": frame_count,
+        }
+        return self._success(
+            executed_arguments=executed,
+            telemetry={
+                "motion": "sonic_reference_motion",
+                "sonic_input": "reference_motion",
+                "estimated_duration_s": executed["duration_s"],
+            },
+        )
+
     def get_health(self, sensor_connected: bool = True) -> RuntimeHealth:
         return {
             "ok": True,

@@ -149,6 +149,28 @@ class VigilBridgeService:
             "telemetry": telemetry,
         }
 
+    def send_sonic_planner_command(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
+        """Forward a backend-neutral SONIC planner command to the runtime."""
+
+        if self._closed:
+            return self._action_error("bridge service is closed")
+        assert self.executor is not None
+        command = getattr(self.executor, "send_sonic_planner_command", None)
+        if not callable(command):
+            return self._action_error("executor does not support sonic planner commands")
+        return command(payload)
+
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
+        """Forward a streamed reference motion request to the runtime."""
+
+        if self._closed:
+            return self._action_error("bridge service is closed")
+        assert self.executor is not None
+        player = getattr(self.executor, "play_sonic_reference_motion", None)
+        if not callable(player):
+            return self._action_error("executor does not support sonic reference motion")
+        return player(payload)
+
     def get_observation(self, payload: Mapping[str, Any] | None = None) -> ObservationResponse:
         if payload is not None:
             self._set_runtime_mode(str(payload.get("runtime_mode", self.runtime_mode)))

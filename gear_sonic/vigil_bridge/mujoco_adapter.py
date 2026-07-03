@@ -212,6 +212,10 @@ class PackedPublisher:
         facing: list[float],
         speed: float = -1.0,
         height: float = -1.0,
+        upper_body_position: list[float] | None = None,
+        upper_body_velocity: list[float] | None = None,
+        left_hand_joints: list[float] | None = None,
+        right_hand_joints: list[float] | None = None,
     ) -> None:
         fields = [
             {"name": "mode", "dtype": "i32", "shape": [1]},
@@ -220,17 +224,99 @@ class PackedPublisher:
             {"name": "speed", "dtype": "f32", "shape": [1]},
             {"name": "height", "dtype": "f32", "shape": [1]},
         ]
+        chunks = [
+            struct.pack("<i", int(mode)),
+            struct.pack("<fff", *[float(v) for v in movement]),
+            struct.pack("<fff", *[float(v) for v in facing]),
+            struct.pack("<f", float(speed)),
+            struct.pack("<f", float(height)),
+        ]
+        for name, values, size in (
+            ("upper_body_position", upper_body_position, 17),
+            ("upper_body_velocity", upper_body_velocity, 17),
+            ("left_hand_joints", left_hand_joints, 7),
+            ("right_hand_joints", right_hand_joints, 7),
+        ):
+            if values is None:
+                continue
+            vals = [float(v) for v in values]
+            if len(vals) != size:
+                raise ValueError(f"{name} must have {size} values")
+            fields.append({"name": name, "dtype": "f32", "shape": [size]})
+            chunks.append(struct.pack("<" + "f" * size, *vals))
         header = {"v": 1, "endian": "le", "count": 1, "fields": fields}
+        data = b"".join(chunks)
+        self._send_packed("planner", header, data)
+
+    def send_reference_motion(self, frames: Mapping[str, Any]) -> None:
+        joint_pos = self._matrix(frames, "joint_pos", 29)
+        joint_vel = self._matrix(frames, "joint_vel", 29)
+        body_quat = self._body_quat_matrix(frames)
+        if not (len(joint_pos) == len(joint_vel) == len(body_quat)):
+            raise ValueError("joint_pos, joint_vel, and body_quat_w must have matching frame counts")
+        count = len(joint_pos)
+        if count <= 0:
+            raise ValueError("reference motion must contain at least one frame")
+        quat_width = len(body_quat[0])
+        quat_shape = [count, 4] if quat_width == 4 else [count, quat_width // 4, 4]
+
+        fields = [
+            {"name": "joint_pos", "dtype": "f32", "shape": [count, 29]},
+            {"name": "joint_vel", "dtype": "f32", "shape": [count, 29]},
+            {"name": "body_quat_w", "dtype": "f32", "shape": quat_shape},
+            {"name": "frame_index", "dtype": "i64", "shape": [count]},
+        ]
+        frame_index = frames.get("frame_index")
+        if frame_index is None:
+            frame_index = list(range(count))
+        indices = [int(v) for v in frame_index]
+        if len(indices) != count:
+            raise ValueError("frame_index must match reference motion frame count")
         data = b"".join(
             [
-                struct.pack("<i", int(mode)),
-                struct.pack("<fff", *[float(v) for v in movement]),
-                struct.pack("<fff", *[float(v) for v in facing]),
-                struct.pack("<f", float(speed)),
-                struct.pack("<f", float(height)),
+                struct.pack("<" + "f" * (count * 29), *[v for row in joint_pos for v in row]),
+                struct.pack("<" + "f" * (count * 29), *[v for row in joint_vel for v in row]),
+                struct.pack("<" + "f" * (count * quat_width), *[v for row in body_quat for v in row]),
+                struct.pack("<" + "q" * count, *indices),
             ]
         )
-        self._send_packed("planner", header, data)
+        header = {"v": 1, "endian": "le", "count": count, "fields": fields}
+        self._send_packed("pose", header, data)
+
+    @staticmethod
+    def _matrix(frames: Mapping[str, Any], key: str, width: int, fallback_key: str | None = None) -> list[list[float]]:
+        raw = frames.get(key)
+        if raw is None and fallback_key is not None:
+            raw = frames.get(fallback_key)
+        if not isinstance(raw, list):
+            raise ValueError(f"frames.{key} must be a list")
+        out: list[list[float]] = []
+        for row in raw:
+            vals = [float(v) for v in row]
+            if len(vals) != width:
+                raise ValueError(f"frames.{key} rows must have {width} values")
+            out.append(vals)
+        return out
+
+    @staticmethod
+    def _body_quat_matrix(frames: Mapping[str, Any]) -> list[list[float]]:
+        raw = frames.get("body_quat_w")
+        if raw is None:
+            raw = frames.get("body_quat")
+        if not isinstance(raw, list):
+            raise ValueError("frames.body_quat_w must be a list")
+        out: list[list[float]] = []
+        width: int | None = None
+        for row in raw:
+            vals = [float(v) for v in row]
+            if len(vals) < 4 or len(vals) % 4 != 0:
+                raise ValueError("frames.body_quat_w rows must contain one or more wxyz quaternions")
+            if width is None:
+                width = len(vals)
+            elif len(vals) != width:
+                raise ValueError("frames.body_quat_w rows must have consistent widths")
+            out.append(vals)
+        return out
 
     def _send_packed(self, topic: str, header: dict[str, Any], data: bytes) -> None:
         import json
@@ -535,6 +621,68 @@ class MujocoRuntimeClient:
             publisher.send_planner(LOCO_IDLE, [0.0, 0.0, 0.0], facing, -1.0, -1.0)
             time.sleep(1.0 / max(self.config.rate_hz, 1.0))
 
+    def send_sonic_planner_command(self, payload: Mapping[str, Any]) -> JSONDict:
+        publisher = self._require_publisher()
+        command = dict(payload.get("command") or {})
+        mode = int(command.get("mode", LOCO_IDLE))
+        movement = self._direction(command.get("movement_direction"), [0.0, 0.0, 0.0])
+        facing = self._direction(command.get("facing_direction"), [1.0, 0.0, 0.0])
+        if str(command.get("frame", "world")) == "robot":
+            state = self.latest_state()
+            if state is not None:
+                self._ensure_yaw_origin(state)
+                yaw = self._relative_yaw(state)
+                movement = self._rotate_xy(movement, yaw)
+                facing = self._rotate_xy(facing, yaw)
+                self._last_facing_yaw = yaw
+        speed = float(command.get("speed", -1.0))
+        height = float(command.get("height", -1.0))
+        duration_s = max(0.0, float(payload.get("duration_s", 0.0)))
+        stop_after = bool(payload.get("stop_after", False))
+        started_at = time.monotonic()
+        deadline = started_at + duration_s
+        sent = 0
+        while True:
+            publisher.send_planner(
+                mode,
+                movement,
+                facing,
+                speed,
+                height,
+                upper_body_position=self._optional_float_list(command.get("upper_body_position")),
+                upper_body_velocity=self._optional_float_list(command.get("upper_body_velocity")),
+                left_hand_joints=self._optional_float_list(command.get("left_hand_joints")),
+                right_hand_joints=self._optional_float_list(command.get("right_hand_joints")),
+            )
+            sent += 1
+            if duration_s <= 0.0 or time.monotonic() >= deadline:
+                break
+            time.sleep(1.0 / max(self.config.rate_hz, 1.0))
+        if stop_after:
+            self.send_idle_burst(duration=self.config.move_settle_time_s, preserve_facing=True)
+        return {
+            "motion": "sonic_planner_command",
+            "sonic_input": "planner_command",
+            "planner_packets_sent": sent,
+            "duration_s": time.monotonic() - started_at,
+            "command_duration_s": duration_s,
+        }
+
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> JSONDict:
+        publisher = self._require_publisher()
+        frames = payload.get("frames")
+        if not isinstance(frames, Mapping):
+            raise ValueError("reference motion payload requires frames")
+        publisher.send_command(start=True, stop=False, planner=False)
+        publisher.send_reference_motion(frames)
+        return {
+            "motion": "sonic_reference_motion",
+            "sonic_input": "reference_motion",
+            "motion_name": str(payload.get("motion_name", "")),
+            "duration_s": float(payload.get("duration_s", 0.0)),
+            "frame_count": len(frames.get("joint_pos", [])) if isinstance(frames.get("joint_pos"), list) else 0,
+        }
+
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> JSONDict:
         publisher = self._require_publisher()
         if speed_mps <= 0.0:
@@ -802,6 +950,26 @@ class MujocoRuntimeClient:
         traveled = math.hypot(dx, dy)
         return math.copysign(traveled, target_distance_m)
 
+    @staticmethod
+    def _direction(value: Any, default: list[float]) -> list[float]:
+        if not isinstance(value, list | tuple) or len(value) != 3:
+            return list(default)
+        return [float(value[0]), float(value[1]), float(value[2])]
+
+    @staticmethod
+    def _rotate_xy(vec: list[float], yaw: float) -> list[float]:
+        c = math.cos(yaw)
+        s = math.sin(yaw)
+        return [c * vec[0] - s * vec[1], s * vec[0] + c * vec[1], vec[2]]
+
+    @staticmethod
+    def _optional_float_list(value: Any) -> list[float] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list | tuple):
+            raise ValueError("optional planner fields must be lists")
+        return [float(v) for v in value]
+
 
 @dataclass
 class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
@@ -853,6 +1021,45 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
         assert self.runtime is not None
         self.runtime.close()
         self.started = False
+
+    def send_sonic_planner_command(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
+        with self._motion_lock:
+            try:
+                health = self.start()
+                if not health.get("ok", False):
+                    return self._mujoco_failure(str(health.get("error_message")), dict(health.get("telemetry", {})))
+                assert self.runtime is not None
+                telemetry = self.runtime.send_sonic_planner_command(payload)
+            except Exception as exc:  # noqa: BLE001
+                return self._mujoco_failure(str(exc), {"motion": "sonic_planner_command"})
+        return self._mujoco_success(
+            executed_arguments={
+                "primitive": "sonic_planner_command",
+                "command": dict(payload.get("command") or {}),
+                "duration_s": float(payload.get("duration_s", 0.0)),
+                "stop_after": bool(payload.get("stop_after", False)),
+            },
+            telemetry=telemetry,
+        )
+
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
+        with self._motion_lock:
+            try:
+                health = self.start()
+                if not health.get("ok", False):
+                    return self._mujoco_failure(str(health.get("error_message")), dict(health.get("telemetry", {})))
+                assert self.runtime is not None
+                telemetry = self.runtime.play_sonic_reference_motion(payload)
+            except Exception as exc:  # noqa: BLE001
+                return self._mujoco_failure(str(exc), {"motion": "sonic_reference_motion"})
+        return self._mujoco_success(
+            executed_arguments={
+                "primitive": "sonic_reference_motion",
+                "motion_name": str(payload.get("motion_name", "")),
+                "duration_s": float(payload.get("duration_s", 0.0)),
+            },
+            telemetry=telemetry,
+        )
 
     def move(
         self,
