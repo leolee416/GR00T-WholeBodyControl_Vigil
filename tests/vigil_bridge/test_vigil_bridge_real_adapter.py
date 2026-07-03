@@ -198,6 +198,43 @@ def test_real_backend_rejects_motion_by_default() -> None:
     assert runtime.moves == []
 
 
+def test_real_backend_rejects_low_level_sonic_motion_by_default() -> None:
+    runtime = FakeRealRuntime(config=RealBridgeConfig(motion_enabled=False))
+    service = _service(runtime)
+
+    planner_response = service.send_sonic_planner_command(
+        {
+            "command": {
+                "mode": 2,
+                "movement_direction": [1.0, 0.0, 0.0],
+                "facing_direction": [1.0, 0.0, 0.0],
+                "speed": 0.2,
+                "height": -1.0,
+            },
+            "duration_s": 0.1,
+        }
+    )
+    reference_response = service.play_sonic_reference_motion(
+        {
+            "motion_name": "kimodo_wave",
+            "duration_s": 1.0,
+            "frames": {
+                "joint_pos": [[0.0] * 29],
+                "joint_vel": [[0.0] * 29],
+                "body_quat_w": [[1.0, 0.0, 0.0, 0.0]],
+                "frame_index": [0],
+            },
+        }
+    )
+
+    assert planner_response["ok"] is False
+    assert planner_response["action_status"] == "rejected"
+    assert "real motion is disabled" in planner_response["error_message"]
+    assert reference_response["ok"] is False
+    assert reference_response["action_status"] == "rejected"
+    assert "real motion is disabled" in reference_response["error_message"]
+
+
 def test_real_service_pause_and_resume_keep_runtime_open() -> None:
     runtime = FakeRealRuntime()
     service = _service(runtime)

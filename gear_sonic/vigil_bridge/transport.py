@@ -37,6 +37,10 @@ class BridgeRequestRouter:
             return self.service.reset_episode(request_payload)
         if route == "execute_action":
             return self.service.execute_action(request_payload)
+        if route == "sonic/planner_command":
+            return self.service.send_sonic_planner_command(request_payload)
+        if route == "sonic/reference_motion":
+            return self.service.play_sonic_reference_motion(request_payload)
         if route in {"observation", "get_observation"}:
             return self.service.get_observation(request_payload)
         if route in {"robot_state", "get_robot_state"}:
@@ -190,6 +194,8 @@ def _known_routes() -> set[str]:
         "handshake",
         "reset_episode",
         "execute_action",
+        "sonic/planner_command",
+        "sonic/reference_motion",
         "observation",
         "get_observation",
         "robot_state",

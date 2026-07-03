@@ -116,6 +116,45 @@ def test_unsupported_action_returns_structured_failure() -> None:
     }
 
 
+def test_sonic_planner_command_endpoint_shape() -> None:
+    response = VigilBridgeService().send_sonic_planner_command(
+        {
+            "command": {
+                "mode": 2,
+                "movement_direction": [1.0, 0.0, 0.0],
+                "facing_direction": [1.0, 0.0, 0.0],
+                "speed": 0.5,
+                "height": -1.0,
+                "frame": "robot",
+            },
+            "duration_s": 0.2,
+            "stop_after": True,
+        }
+    )
+
+    assert response["ok"] is True
+    assert response["executed_arguments"]["primitive"] == "sonic_planner_command"
+    assert response["executed_arguments"]["mode"] == 2
+    assert response["telemetry"]["sonic_input"] == "planner_command"
+
+
+def test_sonic_reference_motion_endpoint_shape() -> None:
+    frames = {
+        "joint_pos": [[0.0] * 29],
+        "joint_vel": [[0.0] * 29],
+        "body_quat_w": [[1.0, 0.0, 0.0, 0.0]],
+        "frame_index": [0],
+    }
+    response = VigilBridgeService().play_sonic_reference_motion(
+        {"motion_name": "kimodo_wave", "duration_s": 1.0, "frames": frames}
+    )
+
+    assert response["ok"] is True
+    assert response["executed_arguments"]["primitive"] == "sonic_reference_motion"
+    assert response["executed_arguments"]["motion_name"] == "kimodo_wave"
+    assert response["telemetry"]["sonic_input"] == "reference_motion"
+
+
 def test_dry_run_observation_includes_fake_rgb_and_depth() -> None:
     observation = VigilBridgeService().get_observation({"runtime_mode": "dry_run"})
 

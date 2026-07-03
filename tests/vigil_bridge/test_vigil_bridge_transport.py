@@ -107,6 +107,49 @@ def test_http_execute_action_endpoint(http_server_url: str) -> None:
     assert response["executed_arguments"]["distance_m"] > 0.0
 
 
+def test_http_sonic_planner_command_endpoint(http_server_url: str) -> None:
+    status, response = _post_json(
+        http_server_url,
+        "sonic/planner_command",
+        {
+            "command": {
+                "mode": 2,
+                "movement_direction": [1.0, 0.0, 0.0],
+                "facing_direction": [1.0, 0.0, 0.0],
+                "speed": 0.5,
+                "height": -1.0,
+                "frame": "robot",
+            },
+            "duration_s": 0.1,
+        },
+    )
+
+    assert status == 200
+    assert response["ok"] is True
+    assert response["executed_arguments"]["primitive"] == "sonic_planner_command"
+
+
+def test_http_sonic_reference_motion_endpoint(http_server_url: str) -> None:
+    status, response = _post_json(
+        http_server_url,
+        "sonic/reference_motion",
+        {
+            "motion_name": "kimodo_wave",
+            "duration_s": 1.0,
+            "frames": {
+                "joint_pos": [[0.0] * 29],
+                "joint_vel": [[0.0] * 29],
+                "body_quat_w": [[1.0, 0.0, 0.0, 0.0]],
+                "frame_index": [0],
+            },
+        },
+    )
+
+    assert status == 200
+    assert response["ok"] is True
+    assert response["executed_arguments"]["primitive"] == "sonic_reference_motion"
+
+
 def test_http_pause_and_resume_endpoints(http_server_url: str) -> None:
     pause_status, pause_response = _post_json(http_server_url, "pause", {"runtime_mode": "dry_run"})
     resume_status, resume_response = _post_json(http_server_url, "resume", {"runtime_mode": "dry_run"})

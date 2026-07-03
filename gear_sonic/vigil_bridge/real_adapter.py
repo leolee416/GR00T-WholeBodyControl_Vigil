@@ -226,6 +226,69 @@ class RealRuntimeClient:
             publisher.send_planner(LOCO_IDLE, [0.0, 0.0, 0.0], facing, -1.0, -1.0)
             time.sleep(1.0 / max(self.config.rate_hz, 1.0))
 
+    def send_sonic_planner_command(self, payload: Mapping[str, Any]) -> JSONDict:
+        publisher = self._require_publisher()
+        command = dict(payload.get("command") or {})
+        mode = int(command.get("mode", LOCO_IDLE))
+        movement = self._direction(command.get("movement_direction"), [0.0, 0.0, 0.0])
+        facing = self._direction(command.get("facing_direction"), [1.0, 0.0, 0.0])
+        if str(command.get("frame", "world")) == "robot":
+            state = self.wait_for_state(timeout=self.config.state_timeout_s)
+            if state is None:
+                raise RuntimeError("no real-robot state available before planner command")
+            self._ensure_yaw_origin(state)
+            yaw = self._relative_yaw(state)
+            movement = self._rotate_xy(movement, yaw)
+            facing = self._rotate_xy(facing, yaw)
+            self._last_facing_yaw = yaw
+        speed = float(command.get("speed", -1.0))
+        height = float(command.get("height", -1.0))
+        duration_s = max(0.0, float(payload.get("duration_s", 0.0)))
+        stop_after = bool(payload.get("stop_after", False))
+        started_at = time.monotonic()
+        deadline = started_at + duration_s
+        sent = 0
+        while True:
+            publisher.send_planner(
+                mode,
+                movement,
+                facing,
+                speed,
+                height,
+                upper_body_position=self._optional_float_list(command.get("upper_body_position")),
+                upper_body_velocity=self._optional_float_list(command.get("upper_body_velocity")),
+                left_hand_joints=self._optional_float_list(command.get("left_hand_joints")),
+                right_hand_joints=self._optional_float_list(command.get("right_hand_joints")),
+            )
+            sent += 1
+            if duration_s <= 0.0 or time.monotonic() >= deadline:
+                break
+            time.sleep(1.0 / max(self.config.rate_hz, 1.0))
+        if stop_after:
+            self.send_idle_burst(duration=self.config.move_settle_time_s, preserve_facing=True)
+        return {
+            "motion": "sonic_planner_command",
+            "sonic_input": "planner_command",
+            "planner_packets_sent": sent,
+            "duration_s": time.monotonic() - started_at,
+            "command_duration_s": duration_s,
+        }
+
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> JSONDict:
+        publisher = self._require_publisher()
+        frames = payload.get("frames")
+        if not isinstance(frames, Mapping):
+            raise ValueError("reference motion payload requires frames")
+        publisher.send_command(start=True, stop=False, planner=False)
+        publisher.send_reference_motion(frames)
+        return {
+            "motion": "sonic_reference_motion",
+            "sonic_input": "reference_motion",
+            "motion_name": str(payload.get("motion_name", "")),
+            "duration_s": float(payload.get("duration_s", 0.0)),
+            "frame_count": len(frames.get("joint_pos", [])) if isinstance(frames.get("joint_pos"), list) else 0,
+        }
+
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> JSONDict:
         publisher = self._require_publisher()
         if speed_mps <= 0.0:
@@ -457,6 +520,26 @@ class RealRuntimeClient:
             return state.yaw
         return wrap_pi(state.yaw - self._yaw_origin)
 
+    @staticmethod
+    def _direction(value: Any, default: list[float]) -> list[float]:
+        if not isinstance(value, list | tuple) or len(value) != 3:
+            return list(default)
+        return [float(value[0]), float(value[1]), float(value[2])]
+
+    @staticmethod
+    def _rotate_xy(vec: list[float], yaw: float) -> list[float]:
+        c = math.cos(yaw)
+        s = math.sin(yaw)
+        return [c * vec[0] - s * vec[1], s * vec[0] + c * vec[1], vec[2]]
+
+    @staticmethod
+    def _optional_float_list(value: Any) -> list[float] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list | tuple):
+            raise ValueError("optional planner fields must be lists")
+        return [float(v) for v in value]
+
 
 @dataclass
 class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
@@ -513,6 +596,65 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
         assert self.runtime is not None
         self.runtime.close()
         self.started = False
+
+    def send_sonic_planner_command(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
+        with self._motion_lock:
+            if not self.config.motion_enabled:
+                return self._real_failure(
+                    "real motion is disabled; start bridge with --enable-real-motion to command hardware",
+                    {"motion": "sonic_planner_command"},
+                    action_status="rejected",
+                )
+            try:
+                health = self.start()
+                if not health.get("ok", False):
+                    return self._real_failure(str(health.get("error_message")), dict(health.get("telemetry", {})))
+                assert self.runtime is not None
+                telemetry = self.runtime.send_sonic_planner_command(payload)
+            except Exception as exc:  # noqa: BLE001 - fail closed for hardware mode.
+                halt_health = self.halt()
+                return self._real_failure(
+                    str(exc),
+                    {"motion": "sonic_planner_command", "halt_called": True, "halt_health": halt_health},
+                )
+        return self._real_success(
+            executed_arguments={
+                "primitive": "sonic_planner_command",
+                "command": dict(payload.get("command") or {}),
+                "duration_s": float(payload.get("duration_s", 0.0)),
+                "stop_after": bool(payload.get("stop_after", False)),
+            },
+            telemetry=telemetry,
+        )
+
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
+        with self._motion_lock:
+            if not self.config.motion_enabled:
+                return self._real_failure(
+                    "real motion is disabled; start bridge with --enable-real-motion to command hardware",
+                    {"motion": "sonic_reference_motion"},
+                    action_status="rejected",
+                )
+            try:
+                health = self.start()
+                if not health.get("ok", False):
+                    return self._real_failure(str(health.get("error_message")), dict(health.get("telemetry", {})))
+                assert self.runtime is not None
+                telemetry = self.runtime.play_sonic_reference_motion(payload)
+            except Exception as exc:  # noqa: BLE001 - fail closed for hardware mode.
+                halt_health = self.halt()
+                return self._real_failure(
+                    str(exc),
+                    {"motion": "sonic_reference_motion", "halt_called": True, "halt_health": halt_health},
+                )
+        return self._real_success(
+            executed_arguments={
+                "primitive": "sonic_reference_motion",
+                "motion_name": str(payload.get("motion_name", "")),
+                "duration_s": float(payload.get("duration_s", 0.0)),
+            },
+            telemetry=telemetry,
+        )
 
     def move(
         self,
