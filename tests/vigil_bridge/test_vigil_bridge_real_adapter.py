@@ -179,6 +179,7 @@ class FinalHeadingSubscriber:
 
 class RecordingPublisher:
     def __init__(self) -> None:
+        self.commands: list[dict[str, bool]] = []
         self.facings: list[list[float]] = []
 
     def send_planner(
@@ -192,7 +193,7 @@ class RecordingPublisher:
         self.facings.append(facing)
 
     def send_command(self, start: bool, stop: bool, planner: bool = True, pause: bool = False) -> None:
-        pass
+        self.commands.append({"start": start, "stop": stop, "planner": planner, "pause": pause})
 
 
 def _attach_runtime_fakes(
@@ -310,6 +311,32 @@ def test_real_service_pause_and_resume_keep_runtime_open() -> None:
     assert runtime.paused is False
     assert runtime.closed is False
     assert resume_response["executor_started"] is True
+
+
+def test_real_runtime_resume_preserves_current_heading_during_policy_restore() -> None:
+    runtime = RealRuntimeClient(
+        RealBridgeConfig(
+            motion_enabled=True,
+            camera_enabled=False,
+            camera_required=False,
+            auto_start_control=True,
+            startup_command_burst_s=0.0,
+        )
+    )
+    publisher = RecordingPublisher()
+    runtime._publisher = publisher  # type: ignore[assignment]
+    runtime._state_sub = StaticHeadingSubscriber(FakeHeadingState(yaw=math.radians(60.0)))  # type: ignore[assignment]
+    runtime._yaw_origin = 0.0  # type: ignore[attr-defined]
+    runtime.started = True
+    runtime.send_idle_burst = lambda duration, preserve_facing=False: None  # type: ignore[method-assign]
+
+    response = runtime.resume()
+
+    assert response["ok"] is True
+    assert publisher.commands[-1] == {"start": True, "stop": False, "planner": True, "pause": False}
+    facing = publisher.facings[-1]
+    assert abs(facing[0] - 0.5) < 1e-6
+    assert abs(facing[1] - math.sin(math.radians(60.0))) < 1e-6
 
 
 def test_real_executor_maps_forward_to_runtime_move_model(tmp_path: Path) -> None:

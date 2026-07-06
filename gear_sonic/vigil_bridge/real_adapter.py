@@ -112,7 +112,7 @@ class RealRuntimeClient:
         self._yaw_origin: float | None = None
         self._last_facing_yaw = 0.0
 
-    def start(self) -> RuntimeHealth:
+    def start(self, *, preserve_facing_on_start: bool = False) -> RuntimeHealth:
         if self.started:
             return self.get_health()
 
@@ -139,7 +139,7 @@ class RealRuntimeClient:
             if self.config.auto_start_control:
                 if not self.config.motion_enabled:
                     raise RuntimeError("auto_start_control requires motion_enabled")
-                self.send_start_control()
+                self.send_start_control(preserve_facing=preserve_facing_on_start)
 
             state = self.wait_for_state(timeout=self.config.state_timeout_s)
             if state is None:
@@ -188,10 +188,12 @@ class RealRuntimeClient:
         return self.get_health()
 
     def resume(self) -> RuntimeHealth:
-        health = self.start()
-        if health.get("ok", False) and self.config.motion_enabled and not self.config.auto_start_control:
+        was_started = self.started
+        health = self.start(preserve_facing_on_start=True)
+        should_send_start = was_started or not self.config.auto_start_control
+        if health.get("ok", False) and self.config.motion_enabled and should_send_start:
             try:
-                self.send_start_control()
+                self.send_start_control(preserve_facing=True)
                 self.started = True
                 self.paused = False
             except Exception as exc:  # noqa: BLE001 - surface through health.
@@ -208,30 +210,38 @@ class RealRuntimeClient:
         self._state_sub = None
         self._publisher = None
 
-    def send_start_control(self) -> None:
+    def send_start_control(self, *, preserve_facing: bool = False) -> None:
         publisher = self._require_publisher()
+        if preserve_facing:
+            self._capture_current_facing()
+        facing = facing_from_yaw(self._last_facing_yaw)
         deadline = time.monotonic() + max(self.config.startup_command_burst_s, 0.0)
         period_s = max(self.config.startup_command_period_s, 0.01)
         while True:
             publisher.send_command(start=True, stop=False, planner=True)
+            if preserve_facing:
+                publisher.send_planner(LOCO_IDLE, [0.0, 0.0, 0.0], facing, -1.0, -1.0)
             remaining_s = deadline - time.monotonic()
             if remaining_s <= 0.0:
                 break
             time.sleep(min(period_s, remaining_s))
-        self.send_idle_burst(duration=0.5, preserve_facing=False)
+        self.send_idle_burst(duration=0.5, preserve_facing=preserve_facing)
 
     def send_idle_burst(self, duration: float, preserve_facing: bool = False) -> None:
         publisher = self._require_publisher()
         if not preserve_facing:
-            state = self.latest_state()
-            if state is not None:
-                self._ensure_yaw_origin(state)
-                self._last_facing_yaw = self._relative_yaw(state)
+            self._capture_current_facing()
         facing = facing_from_yaw(self._last_facing_yaw)
         deadline = time.monotonic() + max(duration, 0.0)
         while time.monotonic() < deadline:
             publisher.send_planner(LOCO_IDLE, [0.0, 0.0, 0.0], facing, -1.0, -1.0)
             time.sleep(1.0 / max(self.config.rate_hz, 1.0))
+
+    def _capture_current_facing(self) -> None:
+        state = self.latest_state()
+        if state is not None:
+            self._ensure_yaw_origin(state)
+            self._last_facing_yaw = self._relative_yaw(state)
 
     def send_sonic_planner_command(self, payload: Mapping[str, Any]) -> JSONDict:
         publisher = self._require_publisher()
@@ -239,7 +249,9 @@ class RealRuntimeClient:
         mode = int(command.get("mode", LOCO_IDLE))
         movement = self._direction(command.get("movement_direction"), [0.0, 0.0, 0.0])
         facing = self._direction(command.get("facing_direction"), [1.0, 0.0, 0.0])
-        if str(command.get("frame", "world")) == "robot":
+        frame = str(command.get("frame", "world")).lower()
+        state = self.latest_state()
+        if frame in {"robot", "robot_yaw_aligned", "yaw_aligned"}:
             state = self.wait_for_state(timeout=self.config.state_timeout_s)
             if state is None:
                 raise RuntimeError("no real-robot state available before planner command")
@@ -247,7 +259,7 @@ class RealRuntimeClient:
             yaw = self._relative_yaw(state)
             movement = self._rotate_xy(movement, yaw)
             facing = self._rotate_xy(facing, yaw)
-            self._last_facing_yaw = yaw
+        self._last_facing_yaw = self._yaw_from_facing(facing, self._last_facing_yaw)
         speed = float(command.get("speed", -1.0))
         height = float(command.get("height", -1.0))
         duration_s = max(0.0, float(payload.get("duration_s", 0.0)))
@@ -286,7 +298,7 @@ class RealRuntimeClient:
         frames = payload.get("frames")
         if not isinstance(frames, Mapping):
             raise ValueError("reference motion payload requires frames")
-        publisher.send_command(start=True, stop=False, planner=False)
+        self._switch_to_streamed_motion(publisher)
         publisher.send_reference_motion(frames)
         return {
             "motion": "sonic_reference_motion",
@@ -295,6 +307,19 @@ class RealRuntimeClient:
             "duration_s": float(payload.get("duration_s", 0.0)),
             "frame_count": len(frames.get("joint_pos", [])) if isinstance(frames.get("joint_pos"), list) else 0,
         }
+
+    def _switch_to_streamed_motion(self, publisher: PackedPublisher) -> None:
+        """Let ZMQManager finish STREAMED_MOTION toggle before sending pose data."""
+
+        deadline = time.monotonic() + max(0.20, self.config.startup_command_burst_s)
+        period_s = max(self.config.startup_command_period_s, 0.01)
+        while True:
+            publisher.send_command(start=True, stop=False, planner=False)
+            remaining_s = deadline - time.monotonic()
+            if remaining_s <= 0.0:
+                break
+            time.sleep(min(period_s, remaining_s))
+        time.sleep(period_s)
 
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> JSONDict:
         publisher = self._require_publisher()
@@ -683,6 +708,12 @@ class RealRuntimeClient:
         c = math.cos(yaw)
         s = math.sin(yaw)
         return [c * vec[0] - s * vec[1], s * vec[0] + c * vec[1], vec[2]]
+
+    @staticmethod
+    def _yaw_from_facing(facing: list[float], fallback: float) -> float:
+        if math.hypot(facing[0], facing[1]) <= 1e-6:
+            return fallback
+        return math.atan2(facing[1], facing[0])
 
     @staticmethod
     def _optional_float_list(value: Any) -> list[float] | None:
