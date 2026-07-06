@@ -71,9 +71,47 @@ def main() -> None:
     parser.add_argument("--move-settle-time", type=float, default=0.8, help="Idle settle time after move.")
     parser.add_argument("--pause-settle-time", type=float, default=3.2, help="Seconds to wait after pause command.")
     parser.add_argument("--rotate-rate", type=float, default=35.0, help="Default rotate command rate in deg/s.")
+    parser.add_argument("--max-rotate-rate", type=float, default=135.0, help="Real backend max rotate rate in deg/s.")
     parser.add_argument("--rotate-timeout", type=float, default=4.0, help="Minimum rotate timeout in seconds.")
     parser.add_argument("--rotate-extra-time", type=float, default=8.0, help="Extra rotate correction time.")
     parser.add_argument("--rotate-tolerance-deg", type=float, default=3.0, help="Rotate yaw tolerance.")
+    parser.add_argument(
+        "--rotate-main-min-time",
+        type=float,
+        default=2.0,
+        help="Minimum real rotate main attempt window before correction attempts.",
+    )
+    parser.add_argument("--rotate-feedback-gain", type=float, default=1.0, help="Yaw error feedback gain for real rotate.")
+    parser.add_argument(
+        "--rotate-feedback-limit-deg",
+        type=float,
+        default=20.0,
+        help="Max extra facing angle from real rotate yaw feedback.",
+    )
+    parser.add_argument(
+        "--rotate-correction-retries",
+        type=int,
+        default=2,
+        help="Residual correction attempts for real rotate after the main attempt.",
+    )
+    parser.add_argument(
+        "--rotate-correction-boost-deg",
+        type=float,
+        default=10.0,
+        help="Extra facing target angle used by real rotate residual correction.",
+    )
+    parser.add_argument(
+        "--rotate-correction-min-time",
+        type=float,
+        default=3.0,
+        help="Minimum timeout for each real rotate residual correction attempt.",
+    )
+    parser.add_argument(
+        "--rotate-correction-extra-time",
+        type=float,
+        default=3.0,
+        help="Extra timeout for each real rotate residual correction attempt.",
+    )
     parser.add_argument("--state-timeout", type=float, default=3.0, help="Seconds to wait for g1_debug state.")
     parser.add_argument(
         "--odom-source",
@@ -222,9 +260,17 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
                 move_settle_time_s=max(args.move_settle_time, 1.0),
                 pause_settle_time_s=max(args.pause_settle_time, 0.0),
                 default_rotate_rate_deg_s=min(args.rotate_rate, 20.0),
+                max_rotate_rate_deg_s=args.max_rotate_rate,
                 rotate_timeout_s=max(args.rotate_timeout, 6.0),
                 rotate_extra_time_s=max(args.rotate_extra_time, 8.0),
                 rotate_tolerance_deg=max(args.rotate_tolerance_deg, 5.0),
+                rotate_main_min_time_s=args.rotate_main_min_time,
+                rotate_feedback_gain=args.rotate_feedback_gain,
+                rotate_feedback_limit_deg=args.rotate_feedback_limit_deg,
+                rotate_correction_retries=args.rotate_correction_retries,
+                rotate_correction_boost_deg=args.rotate_correction_boost_deg,
+                rotate_correction_min_time_s=args.rotate_correction_min_time,
+                rotate_correction_extra_time_s=args.rotate_correction_extra_time,
                 state_timeout_s=args.state_timeout,
                 camera_enabled=args.real_camera,
                 camera_required=not args.real_camera_optional,

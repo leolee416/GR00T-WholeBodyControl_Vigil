@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +145,67 @@ class FakeRealRuntime:
         }
 
 
+@dataclass
+class FakeHeadingState:
+    yaw: float = 0.0
+    base_quat: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0, 0.0])
+    delta_heading: float = 0.0
+    yaw_rate: float = 0.0
+    timestamp: float = 0.0
+
+
+class StaticHeadingSubscriber:
+    def __init__(self, state: FakeHeadingState) -> None:
+        self.state = state
+
+    def latest(self) -> FakeHeadingState:
+        return self.state
+
+    def wait_for_state(self, timeout: float) -> FakeHeadingState:
+        return self.state
+
+
+class FinalHeadingSubscriber:
+    def __init__(self, initial_yaw: float, final_yaw: float) -> None:
+        self.initial_state = FakeHeadingState(yaw=initial_yaw)
+        self.final_state = FakeHeadingState(yaw=final_yaw)
+
+    def latest(self) -> FakeHeadingState:
+        return self.final_state
+
+    def wait_for_state(self, timeout: float) -> FakeHeadingState:
+        return self.initial_state
+
+
+class RecordingPublisher:
+    def __init__(self) -> None:
+        self.facings: list[list[float]] = []
+
+    def send_planner(
+        self,
+        mode: int,
+        movement: list[float],
+        facing: list[float],
+        speed: float = -1.0,
+        height: float = -1.0,
+    ) -> None:
+        self.facings.append(facing)
+
+    def send_command(self, start: bool, stop: bool, planner: bool = True, pause: bool = False) -> None:
+        pass
+
+
+def _attach_runtime_fakes(
+    runtime: RealRuntimeClient,
+    state_subscriber: StaticHeadingSubscriber | FinalHeadingSubscriber | None = None,
+) -> RecordingPublisher:
+    publisher = RecordingPublisher()
+    runtime._publisher = publisher  # type: ignore[assignment]
+    runtime._state_sub = state_subscriber or StaticHeadingSubscriber(FakeHeadingState())  # type: ignore[assignment]
+    runtime.send_idle_burst = lambda duration, preserve_facing=False: None  # type: ignore[method-assign]
+    return publisher
+
+
 def _service(runtime: FakeRealRuntime) -> VigilBridgeService:
     config = runtime.config
     return VigilBridgeService(
@@ -256,6 +318,132 @@ def test_real_executor_maps_forward_to_runtime_move_model(tmp_path: Path) -> Non
     assert response["telemetry"]["dry_run"] is False
     assert response["telemetry"]["completion"]["capture_timing"] == "after_settle"
     assert response["telemetry"]["move_model"]["enabled"] is True
+
+
+def test_real_executor_clamps_rotate_rate_to_real_safety_limit() -> None:
+    runtime = FakeRealRuntime(
+        config=RealBridgeConfig(
+            motion_enabled=True,
+            use_move_model=False,
+            max_rotate_rate_deg_s=135.0,
+        )
+    )
+    service = _service(runtime)
+
+    response = service.execute_action(
+        {
+            "episode_id": "real_episode",
+            "step_id": 4,
+            "runtime_mode": "real",
+            "skill_name": "navigate.turn_right",
+            "arguments": {"degrees": 30},
+            "safety": {"rate_deg_s": 180, "timeout_s": 5.0},
+        }
+    )
+
+    assert response["ok"] is True
+    assert runtime.rotates == [{"degrees": -30.0, "rate_deg_s": 135.0, "timeout_s": 5.0}]
+
+
+def test_real_runtime_rotate_applies_yaw_error_feedback_to_facing_command() -> None:
+    runtime = RealRuntimeClient(
+        RealBridgeConfig(
+            motion_enabled=True,
+            camera_enabled=False,
+            camera_required=False,
+            rate_hz=1000.0,
+            rotate_correction_retries=0,
+            rotate_feedback_gain=1.0,
+            rotate_feedback_limit_deg=20.0,
+        )
+    )
+    publisher = _attach_runtime_fakes(runtime)
+
+    telemetry = runtime.rotate(degrees=10.0, rate_deg_s=1.0, timeout_s=0.02)
+
+    commanded_yaws = [math.degrees(math.atan2(facing[1], facing[0])) for facing in publisher.facings]
+    assert max(commanded_yaws) > 8.0
+    assert telemetry["rotate_controller"]["feedback_gain"] == 1.0
+    assert telemetry["completion"]["attempt_count"] == 1
+
+
+def test_real_runtime_rotate_main_attempt_has_minimum_window() -> None:
+    runtime = RealRuntimeClient(
+        RealBridgeConfig(
+            motion_enabled=True,
+            camera_enabled=False,
+            camera_required=False,
+            max_rotate_rate_deg_s=135.0,
+            rotate_correction_retries=1,
+            rotate_main_min_time_s=2.0,
+            rotate_settle_time_s=0.5,
+        )
+    )
+    attempt_timeouts: list[float] = []
+    _attach_runtime_fakes(runtime)
+
+    def record_timeout(**kwargs: Any) -> tuple[bool, float]:
+        attempt_timeouts.append(float(kwargs["timeout_s"]))
+        return False, math.radians(30.0)
+
+    runtime._run_rotate_attempt = record_timeout  # type: ignore[method-assign]
+
+    telemetry = runtime.rotate(degrees=-30.0, rate_deg_s=135.0, timeout_s=5.0)
+
+    assert attempt_timeouts[0] == pytest.approx(2.0)
+    assert telemetry["rotate_controller"]["main_min_time_s"] == 2.0
+
+
+def test_real_runtime_rotate_uses_boosted_residual_correction_attempt() -> None:
+    runtime = RealRuntimeClient(
+        RealBridgeConfig(
+            motion_enabled=True,
+            camera_enabled=False,
+            camera_required=False,
+            rate_hz=1000.0,
+            rotate_correction_retries=1,
+            rotate_correction_boost_deg=10.0,
+            rotate_correction_min_time_s=0.01,
+            rotate_correction_extra_time_s=0.0,
+            rotate_feedback_gain=0.0,
+            rotate_main_min_time_s=0.0,
+            rotate_settle_time_s=0.0,
+            rotate_tolerance_deg=0.1,
+        )
+    )
+    _attach_runtime_fakes(runtime)
+
+    telemetry = runtime.rotate(degrees=1.0, rate_deg_s=1000.0, timeout_s=0.05)
+
+    attempts = telemetry["rotate_controller"]["attempts"]
+    assert telemetry["completed"] is False
+    assert telemetry["completion"]["attempt_count"] == 2
+    assert attempts[1]["command_target_deg"] == pytest.approx(11.0)
+
+
+def test_real_runtime_rotate_accepts_final_error_inside_tolerance_after_idle() -> None:
+    runtime = RealRuntimeClient(
+        RealBridgeConfig(
+            motion_enabled=True,
+            camera_enabled=False,
+            camera_required=False,
+            rotate_correction_retries=0,
+            rotate_tolerance_deg=5.0,
+        )
+    )
+    _attach_runtime_fakes(runtime, FinalHeadingSubscriber(0.0, math.radians(29.0)))
+
+    def timeout_inside_tolerance(**kwargs: Any) -> tuple[bool, float]:
+        return False, math.radians(1.0)
+
+    runtime._run_rotate_attempt = timeout_inside_tolerance  # type: ignore[method-assign]
+
+    telemetry = runtime.rotate(degrees=30.0, rate_deg_s=30.0, timeout_s=1.5)
+
+    assert telemetry["completed"] is True
+    assert telemetry["completion"]["completion_detail"] == "yaw_tolerance_after_idle"
+    assert telemetry["motion_result"]["final_error_deg"] == pytest.approx(1.0)
+    assert telemetry["motion_result"]["estimated_degrees"] == pytest.approx(29.0)
 
 
 def test_real_executor_halts_on_runtime_exception() -> None:

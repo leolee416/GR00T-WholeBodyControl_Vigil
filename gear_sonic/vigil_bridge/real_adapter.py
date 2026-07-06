@@ -70,12 +70,19 @@ class RealBridgeConfig:
     move_settle_time_s: float = 1.0
     default_rotate_rate_deg_s: float = 20.0
     min_rotate_rate_deg_s: float = 5.0
-    max_rotate_rate_deg_s: float = 30.0
+    max_rotate_rate_deg_s: float = 135.0
     rotate_tolerance_deg: float = 5.0
     rotate_timeout_s: float = 6.0
     rotate_extra_time_s: float = 8.0
     rotate_settle_time_s: float = 0.5
+    rotate_main_min_time_s: float = 2.0
     rotate_yaw_rate_tolerance_deg: float = 10.0
+    rotate_correction_retries: int = 2
+    rotate_correction_boost_deg: float = 10.0
+    rotate_correction_min_time_s: float = 3.0
+    rotate_correction_extra_time_s: float = 3.0
+    rotate_feedback_gain: float = 1.0
+    rotate_feedback_limit_deg: float = 20.0
     state_timeout_s: float = 3.0
     startup_command_burst_s: float = 0.5
     startup_command_period_s: float = 0.05
@@ -278,51 +285,73 @@ class RealRuntimeClient:
         target_yaw = wrap_pi(start_yaw + math.radians(degrees))
         tolerance = math.radians(self.config.rotate_tolerance_deg)
         yaw_rate_tol = math.radians(self.config.rotate_yaw_rate_tolerance_deg)
-        deadline = time.monotonic() + timeout_s
-        settle_since: float | None = None
-        commanded_yaw = start_yaw
-        last_command_time = time.monotonic()
         last_error = wrap_pi(target_yaw - start_yaw)
         completed = False
+        completion_detail = "timeout"
         started_at = time.monotonic()
+        deadline = started_at + timeout_s
+        attempt_records: list[JSONDict] = []
 
         try:
-            while time.monotonic() < deadline:
-                now = time.monotonic()
-                dt = max(now - last_command_time, 1e-3)
-                last_command_time = now
+            attempts = 1 + max(0, self.config.rotate_correction_retries)
+            main_attempt_timeout = self._main_rotate_attempt_timeout(
+                degrees=degrees,
+                rate_deg_s=rate_deg_s,
+                timeout_s=timeout_s,
+                attempts=attempts,
+            )
+            for attempt in range(1, attempts + 1):
+                remaining_budget = deadline - time.monotonic()
+                if remaining_budget <= 0.0:
+                    break
 
-                remaining_command = wrap_pi(target_yaw - commanded_yaw)
-                max_step = math.radians(rate_deg_s) * dt
-                if abs(remaining_command) <= max_step:
-                    commanded_yaw = target_yaw
+                attempt_start_yaw = start_yaw
+                if attempt == 1:
+                    command_target_yaw = target_yaw
+                    attempt_timeout = min(remaining_budget, main_attempt_timeout)
                 else:
-                    commanded_yaw = wrap_pi(commanded_yaw + math.copysign(max_step, remaining_command))
-
-                state = self.latest_state()
-                yaw_rate = None
-                if state is not None:
-                    self._ensure_yaw_origin(state)
-                    last_error = wrap_pi(target_yaw - self._relative_yaw(state))
-                    yaw_rate = state.yaw_rate
-                    yaw_is_stable = yaw_rate is None or abs(yaw_rate) <= yaw_rate_tol
-                    if abs(last_error) <= tolerance and yaw_is_stable:
-                        if settle_since is None:
-                            settle_since = now
-                    else:
-                        settle_since = None
-                    if settle_since is not None and now - settle_since >= self.config.rotate_settle_time_s:
+                    state = self.latest_state()
+                    if state is not None:
+                        self._ensure_yaw_origin(state)
+                        attempt_start_yaw = self._relative_yaw(state)
+                        last_error = wrap_pi(target_yaw - attempt_start_yaw)
+                    if abs(last_error) <= tolerance:
                         completed = True
+                        completion_detail = "yaw_tolerance_before_correction"
                         break
+                    boost = math.radians(self.config.rotate_correction_boost_deg)
+                    command_target_yaw = wrap_pi(target_yaw + math.copysign(boost, last_error))
+                    attempt_timeout = self._correction_rotate_attempt_timeout(
+                        yaw_error=last_error,
+                        rate_deg_s=rate_deg_s,
+                        remaining_budget=remaining_budget,
+                    )
 
-                publisher.send_planner(
-                    LOCO_IDLE,
-                    [0.0, 0.0, 0.0],
-                    facing_from_yaw(commanded_yaw),
-                    -1.0,
-                    -1.0,
+                attempt_started_at = time.monotonic()
+                completed, last_error = self._run_rotate_attempt(
+                    publisher=publisher,
+                    desired_yaw=target_yaw,
+                    command_target_yaw=command_target_yaw,
+                    start_command_yaw=attempt_start_yaw,
+                    command_rate_deg_s=rate_deg_s,
+                    timeout_s=attempt_timeout,
+                    tolerance=tolerance,
+                    yaw_rate_tol=yaw_rate_tol,
                 )
-                time.sleep(1.0 / max(self.config.rate_hz, 1.0))
+                if completed:
+                    completion_detail = "yaw_settled"
+                attempt_records.append(
+                    self._rotate_attempt_record(
+                        attempt=attempt,
+                        completed=completed,
+                        started_at=attempt_started_at,
+                        timeout_s=attempt_timeout,
+                        command_target_yaw=command_target_yaw,
+                        final_error=last_error,
+                    )
+                )
+                if completed:
+                    break
         finally:
             self._last_facing_yaw = target_yaw
             self.send_idle_burst(duration=0.3, preserve_facing=True)
@@ -331,7 +360,12 @@ class RealRuntimeClient:
         actual_degrees: float | None = None
         if final_state is not None:
             self._ensure_yaw_origin(final_state)
-            actual_degrees = math.degrees(wrap_pi(self._relative_yaw(final_state) - start_yaw))
+            final_relative_yaw = self._relative_yaw(final_state)
+            last_error = wrap_pi(target_yaw - final_relative_yaw)
+            actual_degrees = math.degrees(wrap_pi(final_relative_yaw - start_yaw))
+            if not completed and abs(last_error) <= tolerance:
+                completed = True
+                completion_detail = "yaw_tolerance_after_idle"
 
         motion_result: JSONDict = {
             "target_degrees": degrees,
@@ -346,12 +380,130 @@ class RealRuntimeClient:
             "completion": {
                 "motion_commanded": True,
                 "completion_source": "yaw_closed_loop",
+                "completion_detail": completion_detail,
                 "capture_timing": "after_settle" if completed else "after_timeout",
                 "settled": completed,
                 "duration_s": time.monotonic() - started_at,
+                "attempt_count": len(attempt_records),
+            },
+            "rotate_controller": {
+                "feedback_gain": self.config.rotate_feedback_gain,
+                "feedback_limit_deg": self.config.rotate_feedback_limit_deg,
+                "main_min_time_s": self.config.rotate_main_min_time_s,
+                "correction_retries": self.config.rotate_correction_retries,
+                "correction_boost_deg": self.config.rotate_correction_boost_deg,
+                "attempts": attempt_records,
             },
             "motion_result": motion_result,
         }
+
+    def _main_rotate_attempt_timeout(
+        self,
+        degrees: float,
+        rate_deg_s: float,
+        timeout_s: float,
+        attempts: int,
+    ) -> float:
+        if attempts <= 1:
+            return timeout_s
+        nominal_timeout = abs(degrees) / max(rate_deg_s, 1.0) + max(
+            self.config.rotate_settle_time_s,
+            0.0,
+        )
+        target_timeout = max(nominal_timeout, max(self.config.rotate_main_min_time_s, 0.0))
+        return min(timeout_s, target_timeout)
+
+    def _correction_rotate_attempt_timeout(
+        self,
+        yaw_error: float,
+        rate_deg_s: float,
+        remaining_budget: float,
+    ) -> float:
+        planned_timeout = max(
+            self.config.rotate_correction_min_time_s,
+            abs(math.degrees(yaw_error)) / max(rate_deg_s, 1.0)
+            + self.config.rotate_correction_extra_time_s,
+        )
+        return min(planned_timeout, remaining_budget)
+
+    @staticmethod
+    def _rotate_attempt_record(
+        attempt: int,
+        completed: bool,
+        started_at: float,
+        timeout_s: float,
+        command_target_yaw: float,
+        final_error: float,
+    ) -> JSONDict:
+        return {
+            "attempt": attempt,
+            "completed": completed,
+            "duration_s": time.monotonic() - started_at,
+            "timeout_s": timeout_s,
+            "command_target_deg": math.degrees(command_target_yaw),
+            "final_error_deg": math.degrees(final_error),
+        }
+
+    def _run_rotate_attempt(
+        self,
+        publisher: PackedPublisher,
+        desired_yaw: float,
+        command_target_yaw: float,
+        start_command_yaw: float,
+        command_rate_deg_s: float,
+        timeout_s: float,
+        tolerance: float,
+        yaw_rate_tol: float,
+    ) -> tuple[bool, float]:
+        deadline = time.monotonic() + timeout_s
+        ramp_yaw = start_command_yaw
+        last_command_time = time.monotonic()
+        settle_since: float | None = None
+        last_error = wrap_pi(desired_yaw - start_command_yaw)
+
+        while time.monotonic() < deadline:
+            now = time.monotonic()
+            dt = max(now - last_command_time, 1e-3)
+            last_command_time = now
+
+            remaining_command = wrap_pi(command_target_yaw - ramp_yaw)
+            max_step = math.radians(command_rate_deg_s) * dt
+            if abs(remaining_command) <= max_step:
+                ramp_yaw = command_target_yaw
+            else:
+                ramp_yaw = wrap_pi(ramp_yaw + math.copysign(max_step, remaining_command))
+
+            state = self.latest_state()
+            yaw_rate = None
+            command_yaw = ramp_yaw
+            if state is not None:
+                self._ensure_yaw_origin(state)
+                last_error = wrap_pi(desired_yaw - self._relative_yaw(state))
+                yaw_rate = state.yaw_rate
+                feedback_limit = math.radians(self.config.rotate_feedback_limit_deg)
+                feedback = self.config.rotate_feedback_gain * last_error
+                feedback = min(max(feedback, -feedback_limit), feedback_limit)
+                command_yaw = wrap_pi(ramp_yaw + feedback)
+
+                yaw_is_stable = yaw_rate is None or abs(yaw_rate) <= yaw_rate_tol
+                if abs(last_error) <= tolerance and yaw_is_stable:
+                    if settle_since is None:
+                        settle_since = now
+                else:
+                    settle_since = None
+                if settle_since is not None and now - settle_since >= self.config.rotate_settle_time_s:
+                    return True, last_error
+
+            publisher.send_planner(
+                LOCO_IDLE,
+                [0.0, 0.0, 0.0],
+                facing_from_yaw(command_yaw),
+                -1.0,
+                -1.0,
+            )
+            time.sleep(1.0 / max(self.config.rate_hz, 1.0))
+
+        return False, last_error
 
     def latest_state(self) -> Any | None:
         return None if self._state_sub is None else self._state_sub.latest()
