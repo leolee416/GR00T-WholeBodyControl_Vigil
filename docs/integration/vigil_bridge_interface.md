@@ -55,6 +55,8 @@ python gear_sonic_deploy/scripts/run_vigil_bridge.py --host 127.0.0.1 --port 876
 | `POST` | `/handshake` | `HandshakeRequest` | `HandshakeResponse` | 返回 protocol、runtime_mode、capabilities |
 | `POST` | `/reset_episode` | `ResetEpisodeRequest` | `ResetEpisodeResponse` | 启动 executor 并采样初始 robot_state |
 | `POST` | `/execute_action` | `ExecuteActionRequest` | `ExecuteActionResponse` | 同步执行一个 primitive-level action |
+| `POST` | `/sonic/planner_command` | SONIC planner payload | `ExecuteActionResponse` | 直接下发 backend-neutral planner command；Agent-Sim real facade 使用 |
+| `POST` | `/sonic/reference_motion` | SONIC reference payload | `ExecuteActionResponse` | 直接下发 streamed reference frames；Agent-Sim real facade 使用 |
 | `POST` | `/observation` | optional object | `ObservationResponse` | 获取最新 image + robot_state |
 | `POST` | `/get_observation` | optional object | `ObservationResponse` | `/observation` alias |
 | `POST` | `/robot_state` | optional object | `RobotStateResponse` | 获取 robot_state |
@@ -144,6 +146,12 @@ Response stable fields:
       "sample_width": 2,
       "speaker_volume": 100,
       "speaker_peak_target": 27800,
+      "speaker_led": {
+        "enabled": true,
+        "source": "outgoing_pcm_amplitude",
+        "refresh_hz": 50,
+        "native_tts_amplitude_available": false
+      },
       "tts": {
         "languages": ["zh", "en"],
         "speaker_ids": {"zh": 0, "en": 1},
@@ -188,6 +196,56 @@ Response stable fields:
 
 `ok=true` 只表示 bridge/runtime primitive 成功，不表示 benchmark task success。
 
+### SONIC Planner / Reference Motion
+
+这两个端点是 Agent-Sim real facade 与 bridge 之间的 runtime contract，不是新的
+benchmark action，也不加入 `capabilities.actions`。两者均受 real backend 的
+`motion_enabled`、连接状态和异常自动 `/halt` 保护。
+
+`POST /sonic/planner_command` 示例：
+
+```json
+{
+  "command": {
+    "mode": 2,
+    "movement_direction": [1.0, 0.0, 0.0],
+    "facing_direction": [1.0, 0.0, 0.0],
+    "speed": 0.7,
+    "height": -1.0,
+    "frame": "robot"
+  },
+  "duration_s": 0.4,
+  "stop_after": true,
+  "source": "agent_sim"
+}
+```
+
+`frame="robot"` 表示机器人当前局部坐标意图。real adapter 会使用独立的 planner
+heading origin 把 movement/facing 转到 deploy planner 坐标；不能把该字段当 world
+方向直接透传。`duration_s` 控制发包时长，`stop_after=true` 会追加保持当前朝向的
+idle burst，因此它是定时开环命令，不是精确距离或角度闭环。
+
+`POST /sonic/reference_motion` 顶层字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `motion_name` | string | 诊断名称，例如 `kimodo_wave` |
+| `duration_s` | number | 物理播放时长；可小于 transport frame 总时长 |
+| `source` | string/absent | 调用来源 |
+| `frames.joint_pos` | list[N][29] | IsaacLab/SONIC reference joint order |
+| `frames.joint_vel` | list[N][29] | 与 `joint_pos` 等长 |
+| `frames.body_quat_w` | list[N][4*K] | 每帧一个或多个 wxyz quaternion |
+| `frames.frame_index` | list[N]/absent | 省略时 bridge 使用 `0..N-1` |
+
+bridge 会先连续发送 `start=true, planner=false` 切到 `STREAMED_MOTION`，再原样运输
+reference frames；它不会替上游生成入口/出口曲线或 encoder lookahead。当前 Agent-Sim
+payload 使用实测关节状态作为入口首帧，并在物理动作后附加 46 帧中立 lookahead，避免
+deploy 的 future-observation window 提前截断动作。
+
+成功响应使用 `ExecuteActionResponse` 的 `ok`、`action_status`、
+`executed_arguments` 和 `telemetry`。reference motion 的 `telemetry.frame_count` 是运输
+帧数；HTTP 成功只表示 frames 已下发，不表示机器人已经完成物理播放。
+
 ### Pause / Resume
 
 `/pause` 是保活型暂停，不等同于 `/halt` 或 `/close`：
@@ -196,7 +254,13 @@ Response stable fields:
 - real deploy 收到 ZMQ command `pause=true` 后关闭 planner，清空运动状态，不再执行 policy inference。
 - 真机以 INIT 同样的默认姿态窗口回到并保持 `default_angles`，用于人工 reset 场景和机器人。
 
-`/resume` 会重新发送正常 start/planner command。robot-side launcher 也支持复用：
+`/resume` 会重新发送正常 start/planner command。普通 pause/resume 在同一 planner
+坐标系中保持当前 facing；若此前调用过 `/sonic/reference_motion`，deploy 会在
+`STREAMED_MOTION -> planner` 时重置 heading。bridge 此时必须把恢复瞬间的真实 yaw
+设为新的 planner heading origin，并以 `[1, 0, 0]` 保持当前朝向，不能把旧坐标系的
+relative yaw 再发送一次。
+
+robot-side launcher 也支持复用：
 
 ```bash
 ./vigil_bridge pause
@@ -205,6 +269,16 @@ Response stable fields:
 ```
 
 如果 `./vigil_bridge start` 发现既有 tmux session，会请求 `/resume`，不会重新部署 policy。
+streamed 恢复成功后，runtime telemetry 应满足：
+
+```text
+streamed_motion_active == false
+planner_heading_rebase_count 增加 1
+ready_for_motion == true
+```
+
+诊断用 yaw origin 不会随 planner rebase 改变，因此 `/robot_state` 的 `yaw_deg` 仍连续，
+可以用于测量手势前后的真实净偏航。
 
 ### Observation
 
@@ -238,9 +312,21 @@ Depth 当前作为 camera stream 的 image entry 透出，命名沿用上游 cam
 | `state_id` | provider 生成的状态 id |
 | `base_pose` | base 位姿；real 模式可能只有 heading |
 | `base_velocity` | base 速度；缺失值用 `null` |
-| `joint_positions` | 当前可为空 |
+| `joint_positions` | real/MuJoCo 优先返回 `{"order":"mujoco","values":[29 values]}`；状态缺失时为空 object |
 | `estimated` | 是否为估计值 |
 | `source` | 数据来源，例如 `rt/odostate`, `g1_debug_heading`, `fake` |
+| `heading_state` | `base_quat_wxyz`、`delta_heading_rad`、`yaw_rate_rad_s`、`age_s`；仅相关 backend 提供 |
+
+real/MuJoCo state subscriber 优先读取 `g1_debug.body_q_measured`，缺失时回退
+`body_q`。关节值保持 MuJoCo order，由需要 IsaacLab order 的上游显式转换。
+
+runtime health/状态响应中的关键 telemetry：
+
+| 字段 | 说明 |
+| --- | --- |
+| `ready_for_motion` | command/state/camera 与 motion gate 均满足 |
+| `streamed_motion_active` | 已进入 streamed reference mode，尚未完成 planner 恢复 |
+| `planner_heading_rebase_count` | streamed 恢复时成功重建 planner heading origin 的次数 |
 
 ### Audio I/O
 
@@ -267,6 +353,10 @@ AGENT/VLT OMNI PCM chunks
 - runtime PCM peak target: `27800`
 
 Streaming 是主路径。几十秒整段音频只作为 fallback/debug，因为它至少会增加“录满音频 + 上传/解码 + 播放排队”的延迟，不适合实时对话。
+
+启用 `--audio-speaker-reactive-led` 后，PCM/WAV 播放期间由同一 runner 根据输出振幅
+以 50 Hz 驱动橙黄灯效，结束后过渡到蓝色。该功能要求 LED-aware runner；native
+`TtsMaker` 不提供合成 PCM，所以 `/audio/tts` 不具备精确的振幅联动。
 
 Native TTS 是独立的 HTTP fallback 输出，不经过 OMNI PCM 流。Host/VLT 发送文本后，
 bridge 在 G1 侧调用 `AudioClient.TtsMaker(text, speaker_id)`。默认
@@ -309,7 +399,9 @@ python gear_sonic_deploy/scripts/run_vigil_bridge.py \
   --audio-ws-port 8766 \
   --audio-mic-interface-ip 192.168.123.164 \
   --audio-speaker-iface enP8p1s0 \
-  --audio-speaker-runner /home/unitree/g1_audio_tests/speaker_loud_music/build/g1_speaker_loud_music_runner
+  --audio-speaker-volume 100 \
+  --audio-speaker-runner /home/unitree/g1_audio_tests/vigil_led_speaker/build/g1_vigil_led_speaker_runner \
+  --audio-speaker-reactive-led
 ```
 
 Host/VLT 侧 WebSocket smoke test:
@@ -361,6 +453,8 @@ python -m gear_sonic.vigil_bridge.audio_ws_client \
 | --- | --- | --- | --- | --- | --- | --- |
 | action | `navigate.forward` | `arguments.distance_m/magnitude`, `safety.max_speed_mps`, `safety.timeout_s` | `executed_arguments.distance_m`, `telemetry.completion`, optional `motion_result` | `protocol.py`, `primitive_executor.py`, `mujoco_adapter.py`, `real_adapter.py` | `tests/vigil_bridge/test_vigil_bridge_service.py`, adapter tests | current |
 | action | `navigate.turn_left` | `arguments.degrees/angle_deg/magnitude`, `safety.max_rate_deg_s`, `safety.timeout_s` | `executed_arguments.degrees`, `telemetry.completion`, optional `motion_result` | 同上 | 同上 | current |
+| endpoint | `/sonic/planner_command` | `command`, `duration_s`, `stop_after` | `executed_arguments.command`, planner telemetry | `transport.py`, `service.py`, `mujoco_adapter.py`, `real_adapter.py` | transport + adapter tests | current |
+| endpoint | `/sonic/reference_motion` | `motion_name`, `duration_s`, `frames` | `executed_arguments.motion_name`, frame telemetry | 同上 | transport + adapter tests | current |
 | observation | `rgb` | none | `images.<camera>.encoding`, `images.<camera>.data`, `camera_timestamps` | `protocol.py`, provider normalize methods | adapter/provider tests | current |
 | observation | `depth` | none | `images.<camera>_depth.encoding`, `images.<camera>_depth.data`, `camera_timestamps.<camera>_depth` | `protocol.py`, camera payload normalize methods | adapter/provider tests | current |
 | observation | `robot_state` | none | `robot_state.base_pose`, `robot_state.base_velocity`, `robot_state.estimated`, `robot_state.source` | `protocol.py`, provider state methods | adapter/provider tests | current |

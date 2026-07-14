@@ -158,6 +158,7 @@ class MujocoRobotState:
     delta_heading: float
     timestamp: float
     yaw_rate: float | None = None
+    joint_pos_mujoco: list[float] | None = None
 
 
 @dataclass
@@ -375,12 +376,21 @@ class StateSubscriber(threading.Thread):
                     continue
                 base_ang_vel = data.get("base_ang_vel")
                 yaw_rate = float(base_ang_vel[2]) if base_ang_vel and len(base_ang_vel) >= 3 else None
+                measured_joints = data.get("body_q_measured")
+                if measured_joints is None:
+                    measured_joints = data.get("body_q")
+                joint_pos_mujoco = (
+                    [float(v) for v in measured_joints[:29]]
+                    if measured_joints is not None and len(measured_joints) >= 29
+                    else None
+                )
                 state = MujocoRobotState(
                     yaw=yaw_from_quat_wxyz([float(v) for v in base_quat[:4]]),
                     base_quat=[float(v) for v in base_quat[:4]],
                     delta_heading=float(data.get("delta_heading", 0.0)),
                     timestamp=time.monotonic(),
                     yaw_rate=yaw_rate,
+                    joint_pos_mujoco=joint_pos_mujoco,
                 )
                 with self._lock:
                     self._latest = state

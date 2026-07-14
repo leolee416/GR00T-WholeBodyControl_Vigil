@@ -110,7 +110,10 @@ class RealRuntimeClient:
         self._state_sub: StateSubscriber | None = None
         self._image_sub: ZMQImageSubscriber | None = None
         self._yaw_origin: float | None = None
+        self._planner_yaw_origin: float | None = None
         self._last_facing_yaw = 0.0
+        self._streamed_motion_active = False
+        self._planner_heading_rebase_count = 0
 
     def start(self, *, preserve_facing_on_start: bool = False) -> RuntimeHealth:
         if self.started:
@@ -213,7 +216,10 @@ class RealRuntimeClient:
     def send_start_control(self, *, preserve_facing: bool = False) -> None:
         publisher = self._require_publisher()
         if preserve_facing:
-            self._capture_current_facing()
+            if self._streamed_motion_active:
+                self._rebase_planner_heading_to_current()
+            else:
+                self._capture_current_facing()
         facing = facing_from_yaw(self._last_facing_yaw)
         deadline = time.monotonic() + max(self.config.startup_command_burst_s, 0.0)
         period_s = max(self.config.startup_command_period_s, 0.01)
@@ -241,7 +247,19 @@ class RealRuntimeClient:
         state = self.latest_state()
         if state is not None:
             self._ensure_yaw_origin(state)
-            self._last_facing_yaw = self._relative_yaw(state)
+            self._last_facing_yaw = self._planner_relative_yaw(state)
+
+    def _rebase_planner_heading_to_current(self) -> None:
+        """Match bridge planner coordinates to deploy's post-stream heading reset."""
+
+        state = self.wait_for_state(timeout=self.config.state_timeout_s)
+        if state is None:
+            raise RuntimeError("no real-robot state available before planner heading rebase")
+        self._ensure_yaw_origin(state)
+        self._planner_yaw_origin = state.yaw
+        self._last_facing_yaw = 0.0
+        self._streamed_motion_active = False
+        self._planner_heading_rebase_count += 1
 
     def send_sonic_planner_command(self, payload: Mapping[str, Any]) -> JSONDict:
         publisher = self._require_publisher()
@@ -256,7 +274,7 @@ class RealRuntimeClient:
             if state is None:
                 raise RuntimeError("no real-robot state available before planner command")
             self._ensure_yaw_origin(state)
-            yaw = self._relative_yaw(state)
+            yaw = self._planner_relative_yaw(state)
             movement = self._rotate_xy(movement, yaw)
             facing = self._rotate_xy(facing, yaw)
         self._last_facing_yaw = self._yaw_from_facing(facing, self._last_facing_yaw)
@@ -320,6 +338,7 @@ class RealRuntimeClient:
                 break
             time.sleep(min(period_s, remaining_s))
         time.sleep(period_s)
+        self._streamed_motion_active = True
 
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> JSONDict:
         publisher = self._require_publisher()
@@ -330,7 +349,7 @@ class RealRuntimeClient:
         if state is None:
             raise RuntimeError("no real-robot state available before move")
         self._ensure_yaw_origin(state)
-        self._last_facing_yaw = self._relative_yaw(state)
+        self._last_facing_yaw = self._planner_relative_yaw(state)
 
         sign = 1.0 if distance_m >= 0.0 else -1.0
         facing = facing_from_yaw(self._last_facing_yaw)
@@ -369,7 +388,7 @@ class RealRuntimeClient:
             raise RuntimeError("no real-robot state available before rotate")
 
         self._ensure_yaw_origin(state)
-        start_yaw = self._relative_yaw(state)
+        start_yaw = self._planner_relative_yaw(state)
         target_yaw = wrap_pi(start_yaw + math.radians(degrees))
         tolerance = math.radians(self.config.rotate_tolerance_deg)
         yaw_rate_tol = math.radians(self.config.rotate_yaw_rate_tolerance_deg)
@@ -401,7 +420,7 @@ class RealRuntimeClient:
                     state = self.latest_state()
                     if state is not None:
                         self._ensure_yaw_origin(state)
-                        attempt_start_yaw = self._relative_yaw(state)
+                        attempt_start_yaw = self._planner_relative_yaw(state)
                         last_error = wrap_pi(target_yaw - attempt_start_yaw)
                     if abs(last_error) <= tolerance:
                         completed = True
@@ -448,7 +467,7 @@ class RealRuntimeClient:
         actual_degrees: float | None = None
         if final_state is not None:
             self._ensure_yaw_origin(final_state)
-            final_relative_yaw = self._relative_yaw(final_state)
+            final_relative_yaw = self._planner_relative_yaw(final_state)
             last_error = wrap_pi(target_yaw - final_relative_yaw)
             actual_degrees = math.degrees(wrap_pi(final_relative_yaw - start_yaw))
             if not completed and abs(last_error) <= tolerance:
@@ -566,7 +585,7 @@ class RealRuntimeClient:
             command_yaw = ramp_yaw
             if state is not None:
                 self._ensure_yaw_origin(state)
-                last_error = wrap_pi(desired_yaw - self._relative_yaw(state))
+                last_error = wrap_pi(desired_yaw - self._planner_relative_yaw(state))
                 yaw_rate = state.yaw_rate
                 feedback_limit = math.radians(self.config.rotate_feedback_limit_deg)
                 feedback = self.config.rotate_feedback_gain * last_error
@@ -623,7 +642,11 @@ class RealRuntimeClient:
                 "angular_rad_s": [None, None, state.yaw_rate],
                 "angular_deg_s": [None, None, math.degrees(state.yaw_rate)] if state.yaw_rate is not None else None,
             },
-            "joint_positions": {},
+            "joint_positions": (
+                {"order": "mujoco", "values": getattr(state, "joint_pos_mujoco")}
+                if getattr(state, "joint_pos_mujoco", None) is not None
+                else {}
+            ),
             "estimated": True,
             "source": "g1_debug_heading",
             "heading_state": {
@@ -671,6 +694,8 @@ class RealRuntimeClient:
                 "ready_for_motion": ready_for_motion,
                 "auto_start_control": self.config.auto_start_control,
                 "max_speed_mps": self.config.max_move_speed_mps,
+                "streamed_motion_active": self._streamed_motion_active,
+                "planner_heading_rebase_count": self._planner_heading_rebase_count,
             },
         }
 
@@ -691,11 +716,18 @@ class RealRuntimeClient:
     def _ensure_yaw_origin(self, state: Any) -> None:
         if self._yaw_origin is None:
             self._yaw_origin = state.yaw
+        if self._planner_yaw_origin is None:
+            self._planner_yaw_origin = state.yaw
 
     def _relative_yaw(self, state: Any) -> float:
         if self._yaw_origin is None:
             return state.yaw
         return wrap_pi(state.yaw - self._yaw_origin)
+
+    def _planner_relative_yaw(self, state: Any) -> float:
+        if self._planner_yaw_origin is None:
+            return state.yaw
+        return wrap_pi(state.yaw - self._planner_yaw_origin)
 
     @staticmethod
     def _direction(value: Any, default: list[float]) -> list[float]:

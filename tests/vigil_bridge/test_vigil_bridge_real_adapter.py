@@ -152,6 +152,7 @@ class FakeHeadingState:
     delta_heading: float = 0.0
     yaw_rate: float = 0.0
     timestamp: float = 0.0
+    joint_pos_mujoco: list[float] | None = None
 
 
 class StaticHeadingSubscriber:
@@ -189,6 +190,7 @@ class RecordingPublisher:
         facing: list[float],
         speed: float = -1.0,
         height: float = -1.0,
+        **_kwargs: Any,
     ) -> None:
         self.facings.append(facing)
 
@@ -234,6 +236,21 @@ def _write_move_model(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def test_real_robot_state_exposes_measured_joint_positions() -> None:
+    runtime = RealRuntimeClient(
+        RealBridgeConfig(camera_enabled=False, camera_required=False)
+    )
+    measured = [float(index) / 10.0 for index in range(29)]
+    runtime._state_sub = StaticHeadingSubscriber(  # type: ignore[assignment]
+        FakeHeadingState(joint_pos_mujoco=measured)
+    )
+
+    state = runtime.get_robot_state_payload()
+
+    assert state is not None
+    assert state["joint_positions"] == {"order": "mujoco", "values": measured}
 
 
 def test_real_backend_rejects_motion_by_default() -> None:
@@ -327,6 +344,7 @@ def test_real_runtime_resume_preserves_current_heading_during_policy_restore() -
     runtime._publisher = publisher  # type: ignore[assignment]
     runtime._state_sub = StaticHeadingSubscriber(FakeHeadingState(yaw=math.radians(60.0)))  # type: ignore[assignment]
     runtime._yaw_origin = 0.0  # type: ignore[attr-defined]
+    runtime._planner_yaw_origin = 0.0  # type: ignore[attr-defined]
     runtime.started = True
     runtime.send_idle_burst = lambda duration, preserve_facing=False: None  # type: ignore[method-assign]
 
@@ -337,6 +355,52 @@ def test_real_runtime_resume_preserves_current_heading_during_policy_restore() -
     facing = publisher.facings[-1]
     assert abs(facing[0] - 0.5) < 1e-6
     assert abs(facing[1] - math.sin(math.radians(60.0))) < 1e-6
+
+
+def test_real_runtime_resume_rebases_heading_after_streamed_motion() -> None:
+    runtime = RealRuntimeClient(
+        RealBridgeConfig(
+            motion_enabled=True,
+            camera_enabled=False,
+            camera_required=False,
+            auto_start_control=True,
+            startup_command_burst_s=0.0,
+        )
+    )
+    state = FakeHeadingState(yaw=math.radians(60.0))
+    publisher = RecordingPublisher()
+    runtime._publisher = publisher  # type: ignore[assignment]
+    runtime._state_sub = StaticHeadingSubscriber(state)  # type: ignore[assignment]
+    runtime._yaw_origin = 0.0  # type: ignore[attr-defined]
+    runtime._planner_yaw_origin = 0.0  # type: ignore[attr-defined]
+    runtime._streamed_motion_active = True  # type: ignore[attr-defined]
+    runtime.started = True
+    runtime.send_idle_burst = lambda duration, preserve_facing=False: None  # type: ignore[method-assign]
+
+    response = runtime.resume()
+
+    assert response["ok"] is True
+    assert response["telemetry"]["planner_heading_rebase_count"] == 1
+    assert response["telemetry"]["streamed_motion_active"] is False
+    assert abs(runtime._relative_yaw(state) - math.radians(60.0)) < 1e-6  # type: ignore[attr-defined]
+    assert abs(runtime._planner_relative_yaw(state)) < 1e-6  # type: ignore[attr-defined]
+    facing = publisher.facings[-1]
+    assert abs(facing[0] - 1.0) < 1e-6
+    assert abs(facing[1]) < 1e-6
+
+    runtime.send_sonic_planner_command(
+        {
+            "command": {
+                "mode": 1,
+                "movement_direction": [1.0, 0.0, 0.0],
+                "facing_direction": [1.0, 0.0, 0.0],
+                "frame": "robot",
+            }
+        }
+    )
+    facing = publisher.facings[-1]
+    assert abs(facing[0] - 1.0) < 1e-6
+    assert abs(facing[1]) < 1e-6
 
 
 def test_real_executor_maps_forward_to_runtime_move_model(tmp_path: Path) -> None:
