@@ -28,6 +28,25 @@ AUDIO_CAPABILITIES: JSONDict = {
     "sample_width": 2,
     "speaker_volume": 100,
     "speaker_peak_target": 27800,
+    "speaker_led": {
+        "enabled": False,
+        "source": "outgoing_pcm_amplitude",
+        "refresh_hz": 50,
+        "speech_palette": {
+            "low": [46, 14, 0],
+            "mid": [158, 79, 0],
+            "high": [255, 234, 0],
+            "blue_channel": 0,
+        },
+        "end_animation": {
+            "to_dark_blue_ms": 250,
+            "dark_to_bright_blue_ms": 500,
+            "bright_blue_hold_ms": 500,
+            "dark_blue_rgb": [0, 0, 40],
+            "bright_blue_rgb": [0, 0, 255],
+        },
+        "native_tts_amplitude_available": False,
+    },
     "tts": {
         "languages": ["zh", "en"],
         "speaker_ids": {"zh": 0, "en": 1},

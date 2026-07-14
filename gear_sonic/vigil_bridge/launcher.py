@@ -158,6 +158,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional Unitree DDS interface for the external speaker runner.",
     )
     audio_group.add_argument(
+        "--audio-speaker-reactive-led",
+        action="store_true",
+        help="Drive the G1 speaker LED from outgoing PCM amplitude using the LED-aware runner.",
+    )
+    audio_group.add_argument(
         "--audio-fake-speaker",
         action="store_true",
         help="Use a fake speaker client for dry bridge tests instead of hardware playback.",
@@ -526,6 +531,7 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         or args.audio_mic_interface_ip
         or args.audio_speaker_runner
         or args.audio_speaker_iface
+        or args.audio_speaker_reactive_led
         or args.audio_fake_speaker
         or args.audio_ws
     ):
@@ -538,6 +544,8 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         raise SystemExit("--audio-speaker-volume must be in 1..100")
     if not 1 <= args.audio_speaker_peak_target <= 32767:
         raise SystemExit("--audio-speaker-peak-target must be in 1..32767")
+    if args.audio_speaker_reactive_led and not args.audio_speaker_runner:
+        raise SystemExit("--audio-speaker-reactive-led requires --audio-speaker-runner")
     if args.audio_ws_port <= 0:
         raise SystemExit("--audio-ws-port must be positive")
     if args.audio_ws_host and not args.audio_ws:
@@ -569,6 +577,8 @@ def _audio_bridge_args(args: argparse.Namespace) -> list[str]:
         bridge_args.extend(["--audio-speaker-runner", args.audio_speaker_runner])
     if args.audio_speaker_iface:
         bridge_args.extend(["--audio-speaker-iface", args.audio_speaker_iface])
+    if args.audio_speaker_reactive_led:
+        bridge_args.append("--audio-speaker-reactive-led")
     if args.audio_fake_speaker:
         bridge_args.append("--audio-fake-speaker")
     if args.audio_ws:

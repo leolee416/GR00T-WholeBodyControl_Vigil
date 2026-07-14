@@ -65,6 +65,23 @@ def test_handshake_includes_audio_when_client_requests_it() -> None:
     assert "http_segment_fallback" in response["capabilities"]["audio"]["transport"]
 
 
+def test_audio_capabilities_describe_reactive_speaker_led() -> None:
+    manager = AudioSessionManager(
+        AudioBridgeConfig(enabled=True, fake_speaker=True, speaker_reactive_led=True)
+    )
+
+    led = manager.capabilities()["speaker_led"]
+
+    assert led["enabled"] is True
+    assert led["refresh_hz"] == 50
+    assert led["speech_palette"]["low"] == [46, 14, 0]
+    assert led["speech_palette"]["high"] == [255, 234, 0]
+    assert led["speech_palette"]["blue_channel"] == 0
+    assert led["end_animation"]["to_dark_blue_ms"] == 250
+    assert led["end_animation"]["dark_to_bright_blue_ms"] == 500
+    assert led["end_animation"]["bright_blue_hold_ms"] == 500
+
+
 def test_pcm_peak_normalization_targets_27800_without_clipping() -> None:
     raw = _pcm([-1000, 0, 1000, 500])
 

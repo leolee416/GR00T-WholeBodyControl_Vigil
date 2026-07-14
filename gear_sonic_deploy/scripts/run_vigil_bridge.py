@@ -183,6 +183,11 @@ def main() -> None:
         help="Optional Unitree DDS interface for the external speaker runner.",
     )
     parser.add_argument(
+        "--audio-speaker-reactive-led",
+        action="store_true",
+        help="Drive the G1 speaker LED from outgoing PCM amplitude using the LED-aware runner.",
+    )
+    parser.add_argument(
         "--audio-fake-speaker",
         action="store_true",
         help="Use a fake speaker client for bridge tests instead of hardware playback.",
@@ -192,6 +197,8 @@ def main() -> None:
     parser.add_argument("--audio-ws-port", type=int, default=8766, help="Audio WebSocket bind port.")
     parser.add_argument("--verbose", action="store_true", help="Print MuJoCo bridge transport details.")
     args = parser.parse_args()
+    if args.audio_speaker_reactive_led and not args.audio_speaker_runner:
+        raise SystemExit("--audio-speaker-reactive-led requires --audio-speaker-runner")
     service = _create_service(args)
     audio_ws_server = _start_audio_ws_if_requested(args, service)
     try:
@@ -309,6 +316,7 @@ def _attach_audio(args: argparse.Namespace, service: VigilBridgeService) -> Vigi
                 speaker_peak_target=args.audio_speaker_peak_target,
                 speaker_runner=args.audio_speaker_runner,
                 speaker_iface=args.audio_speaker_iface,
+                speaker_reactive_led=args.audio_speaker_reactive_led,
                 fake_speaker=args.audio_fake_speaker or (
                     args.backend == "dry_run" and not args.audio_speaker_runner
                 ),

@@ -1,0 +1,15 @@
+[Unit]
+Description=Vigil G1 audio bridge with 50 Hz reactive LED
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/unitree/GR00T-WholeBodyControl_Vigil
+Environment=PYTHONPATH=/home/unitree/GR00T-WholeBodyControl_Vigil
+ExecStart=/usr/bin/python3 /home/unitree/GR00T-WholeBodyControl_Vigil/gear_sonic_deploy/scripts/run_vigil_bridge.py --backend dry_run --runtime-mode real --host 0.0.0.0 --port 8765 --audio-enabled --audio-advertise-always --audio-ws --audio-ws-host 0.0.0.0 --audio-ws-port 8766 --audio-mic-interface-ip 192.168.123.164 --audio-speaker-volume 80 --audio-speaker-iface enP8p1s0 --audio-speaker-runner /home/unitree/g1_audio_tests/vigil_led_speaker/build/g1_vigil_led_speaker_runner --audio-speaker-reactive-led
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=default.target

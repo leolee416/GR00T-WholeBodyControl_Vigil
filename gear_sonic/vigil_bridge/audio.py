@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 from collections import deque
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 import io
 import math
@@ -24,6 +25,11 @@ import uuid
 import wave
 
 from gear_sonic.vigil_bridge.protocol import JSONDict
+from gear_sonic.vigil_bridge.audio_led import (
+    DEFAULT_REACTIVE_LED_CONFIG,
+    build_reactive_led_plan,
+    reactive_led_capabilities,
+)
 
 DEFAULT_SAMPLE_RATE = 16000
 DEFAULT_CHANNELS = 1
@@ -56,6 +62,7 @@ class AudioBridgeConfig:
     speaker_runner: str | None = None
     speaker_iface: str | None = None
     speaker_timeout_s: float = 45.0
+    speaker_reactive_led: bool = False
     tts_text_max_chars: int = DEFAULT_TTS_TEXT_MAX_CHARS
     fake_speaker: bool = False
 
@@ -324,7 +331,11 @@ class SubprocessSpeakerClient(SpeakerClient):
         runner_error = self._runner_error(config)
         if runner_error is not None:
             return runner_error
-        with tempfile.NamedTemporaryFile(prefix="g1_bridge_audio_", suffix=".wav", delete=True) as wav_file:
+        led_telemetry: JSONDict = {"enabled": False}
+        with ExitStack() as stack:
+            wav_file = stack.enter_context(
+                tempfile.NamedTemporaryFile(prefix="g1_bridge_audio_", suffix=".wav", delete=True)
+            )
             write_pcm16_wav(wav_file.name, pcm, config.sample_rate, config.channels, config.sample_width)
             cmd = [
                 config.speaker_runner,
@@ -335,11 +346,46 @@ class SubprocessSpeakerClient(SpeakerClient):
                 _volume_safety_flag(config.speaker_volume),
                 "--skip-tts",
             ]
+            if config.speaker_reactive_led:
+                led_plan, led_telemetry = build_reactive_led_plan(
+                    pcm,
+                    sample_rate=config.sample_rate,
+                    channels=config.channels,
+                    sample_width=config.sample_width,
+                )
+                led_file = stack.enter_context(
+                    tempfile.NamedTemporaryFile(prefix="g1_bridge_led_", suffix=".rgb", delete=True)
+                )
+                led_file.write(led_plan)
+                led_file.flush()
+                led_config = DEFAULT_REACTIVE_LED_CONFIG
+                cmd.extend(
+                    [
+                        "--led-plan",
+                        led_file.name,
+                        "--led-refresh-hz",
+                        str(led_config.refresh_hz),
+                        "--led-end-to-dark-ms",
+                        str(led_config.end_to_dark_blue_ms),
+                        "--led-dark-to-bright-ms",
+                        str(led_config.dark_to_bright_blue_ms),
+                        "--led-bright-hold-ms",
+                        str(led_config.bright_blue_hold_ms),
+                    ]
+                )
             if config.speaker_iface:
                 cmd.extend(["--iface", config.speaker_iface])
             completed, error = self._run(cmd, config)
             if error is not None:
-                error.update({"cmd": cmd, "pcm_bytes": len(pcm), "volume": config.speaker_volume, "telemetry": telemetry})
+                error.update(
+                    {
+                        "cmd": cmd,
+                        "pcm_bytes": len(pcm),
+                        "volume": config.speaker_volume,
+                        "telemetry": telemetry,
+                        "reactive_led": led_telemetry,
+                    }
+                )
                 return error
         return {
             "ok": completed.returncode == 0,
@@ -351,6 +397,7 @@ class SubprocessSpeakerClient(SpeakerClient):
             "pcm_bytes": len(pcm),
             "volume": config.speaker_volume,
             "telemetry": telemetry,
+            "reactive_led": led_telemetry,
         }
 
     def tts(self, text: str, speaker_id: int, config: AudioBridgeConfig, telemetry: JSONDict) -> JSONDict:
@@ -474,6 +521,7 @@ class AudioSessionManager:
             "sample_width": self.config.sample_width,
             "speaker_volume": self.config.speaker_volume,
             "speaker_peak_target": self.config.speaker_peak_target,
+            "speaker_led": reactive_led_capabilities(self.config.speaker_reactive_led),
             "tts": {
                 "languages": list(TTS_SPEAKER_IDS),
                 "speaker_ids": dict(TTS_SPEAKER_IDS),

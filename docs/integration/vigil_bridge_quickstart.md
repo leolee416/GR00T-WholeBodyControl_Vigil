@@ -36,7 +36,7 @@ cd ~/GR00T-WholeBodyControl_Vigil
 speaker runner 路径，然后在 `./vigil_bridge start` 上追加 audio 参数：
 
 ```bash
-RUNNER=/home/unitree/g1_audio_tests/speaker_loud_music/build/g1_speaker_loud_music_runner
+RUNNER=/home/unitree/g1_audio_tests/vigil_led_speaker/build/g1_vigil_led_speaker_runner
 
 ./vigil_bridge start \
   --bridge-host 0.0.0.0 \
@@ -50,6 +50,7 @@ RUNNER=/home/unitree/g1_audio_tests/speaker_loud_music/build/g1_speaker_loud_mus
   --audio-mic-interface-ip 192.168.123.164 \
   --audio-speaker-iface enP8p1s0 \
   --audio-speaker-runner "$RUNNER" \
+  --audio-speaker-reactive-led \
   --attach
 ```
 

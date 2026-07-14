@@ -27,6 +27,7 @@ def test_start_forwards_audio_and_tts_options_to_bridge_command() -> None:
         "enP8p1s0",
         "--audio-speaker-runner",
         "/tmp/g1_speaker_runner",
+        "--audio-speaker-reactive-led",
         "--audio-speaker-volume",
         "88",
         "--audio-speaker-peak-target",
@@ -54,6 +55,7 @@ def test_start_forwards_audio_and_tts_options_to_bridge_command() -> None:
         "/tmp/g1_speaker_runner",
         "--audio-speaker-iface",
         "enP8p1s0",
+        "--audio-speaker-reactive-led",
         "--audio-ws",
         "--audio-ws-port",
         "8766",
@@ -87,3 +89,18 @@ def test_audio_disabled_does_not_forward_audio_options() -> None:
     args = _parse_start_args()
 
     assert launcher._audio_bridge_args(args) == []
+
+
+def test_reactive_led_requires_speaker_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    args = _parse_start_args("--with-audio", "--audio-speaker-reactive-led")
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir()
+    tensorrt_root = tmp_path / "TensorRT"
+    (tensorrt_root / "include").mkdir(parents=True)
+    (tensorrt_root / "include" / "NvInfer.h").write_text("", encoding="utf-8")
+    (tensorrt_root / "lib").mkdir()
+    args.tensorrt_root = str(tensorrt_root)
+    monkeypatch.setattr(launcher, "DEPLOY_DIR", deploy_dir)
+
+    with pytest.raises(SystemExit, match="requires --audio-speaker-runner"):
+        launcher._validate_start_inputs(args)

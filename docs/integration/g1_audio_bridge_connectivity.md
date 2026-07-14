@@ -18,7 +18,7 @@ G1 speaker `AudioClient.PlayStream` / `AudioClient.TtsMaker`.
 - HTTP bridge port: `8765`
 - Audio WebSocket port: `8766`
 - Speaker runner:
-  `/home/unitree/g1_audio_tests/speaker_loud_music/build/g1_speaker_loud_music_runner`
+  `/home/unitree/g1_audio_tests/vigil_led_speaker/build/g1_vigil_led_speaker_runner`
 - Standard audio format: 16 kHz, mono, signed PCM16 little-endian
 - Speaker calibration: API `SetVolume(100)`, PCM peak target `27800`
 - TTS mapping: Chinese `speaker_id=0`, English `speaker_id=1`
@@ -32,7 +32,7 @@ real G1 audio input/output paths when `--audio-speaker-runner` is provided.
 ```bash
 cd /home/unitree/GR00T-WholeBodyControl_Vigil
 
-RUNNER=/home/unitree/g1_audio_tests/speaker_loud_music/build/g1_speaker_loud_music_runner
+RUNNER=/home/unitree/g1_audio_tests/vigil_led_speaker/build/g1_vigil_led_speaker_runner
 
 python3 gear_sonic_deploy/scripts/run_vigil_bridge.py \
   --backend dry_run \
@@ -45,7 +45,8 @@ python3 gear_sonic_deploy/scripts/run_vigil_bridge.py \
   --audio-ws-port 8766 \
   --audio-mic-interface-ip 192.168.123.164 \
   --audio-speaker-iface enP8p1s0 \
-  --audio-speaker-runner "$RUNNER"
+  --audio-speaker-runner "$RUNNER" \
+  --audio-speaker-reactive-led
 ```
 
 Important details:
@@ -56,6 +57,22 @@ Important details:
   speaker client by design.
 - With the runner path present, `dry_run` remains motion-free but uses real
   speaker output through the subprocess runner.
+
+### Reactive Speaker LED
+
+The bridge-owned runner is built from
+`gear_sonic/vigil_bridge/native_audio/`. With
+`--audio-speaker-reactive-led`, outgoing PCM drives a 50 Hz saturated
+orange-to-yellow LED plan. Speech frames always use `B=0`. After audio stops,
+the runner transitions to dark blue in 250 ms, brightens to full blue in 500
+ms, and holds full blue for 500 ms. Native `TtsMaker` has no synthesized PCM
+amplitude, so exact amplitude tracking applies to PCM/WAV output.
+
+```bash
+cmake -S gear_sonic/vigil_bridge/native_audio \
+  -B /home/unitree/g1_audio_tests/vigil_led_speaker/build
+cmake --build /home/unitree/g1_audio_tests/vigil_led_speaker/build -j2
+```
 
 ## Host/VLT Side Command
 
