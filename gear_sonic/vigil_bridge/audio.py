@@ -24,12 +24,13 @@ from typing import Any, Mapping
 import uuid
 import wave
 
-from gear_sonic.vigil_bridge.protocol import JSONDict
 from gear_sonic.vigil_bridge.audio_led import (
     DEFAULT_REACTIVE_LED_CONFIG,
     build_reactive_led_plan,
     reactive_led_capabilities,
 )
+from gear_sonic.vigil_bridge.audio_stream import QueuedSpeakerOutput, SpeakerOutputConfig
+from gear_sonic.vigil_bridge.protocol import JSONDict
 
 DEFAULT_SAMPLE_RATE = 16000
 DEFAULT_CHANNELS = 1
@@ -63,6 +64,11 @@ class AudioBridgeConfig:
     speaker_iface: str | None = None
     speaker_timeout_s: float = 45.0
     speaker_reactive_led: bool = False
+    speaker_stream_chunk_ms: int = 200
+    speaker_stream_prebuffer_ms: int = 400
+    speaker_stream_send_lead_ms: int = 20
+    speaker_stream_queue_s: float = 3.0
+    speaker_stream_drain_ms: int = 150
     tts_text_max_chars: int = DEFAULT_TTS_TEXT_MAX_CHARS
     fake_speaker: bool = False
 
@@ -257,11 +263,35 @@ class SpeakerClient:
     def play_pcm(self, pcm: bytes, config: AudioBridgeConfig, telemetry: JSONDict) -> JSONDict:
         raise NotImplementedError
 
+    def configure(self, config: AudioBridgeConfig) -> None:
+        return None
+
     def tts(self, text: str, speaker_id: int, config: AudioBridgeConfig, telemetry: JSONDict) -> JSONDict:
         raise NotImplementedError
 
+    def start_stream(self, utterance_id: str, telemetry: JSONDict) -> JSONDict:
+        return {
+            "ok": False,
+            "error_message": f"{type(self).__name__} does not support persistent PCM streams",
+        }
+
+    def write_stream_pcm(self, pcm: bytes, telemetry: JSONDict) -> JSONDict:
+        return {
+            "ok": False,
+            "error_message": f"{type(self).__name__} does not support persistent PCM streams",
+        }
+
+    def end_stream(self, telemetry: JSONDict) -> JSONDict:
+        return {
+            "ok": False,
+            "error_message": f"{type(self).__name__} does not support persistent PCM streams",
+        }
+
     def stop(self) -> JSONDict:
         return {"ok": True, "error_message": None}
+
+    def close(self) -> None:
+        return None
 
     def health(self) -> JSONDict:
         return {"available": False, "type": type(self).__name__}
@@ -271,12 +301,21 @@ class FakeSpeakerClient(SpeakerClient):
     """Test speaker that records calls without touching hardware."""
 
     def __init__(self) -> None:
+        self.config: AudioBridgeConfig | None = None
         self.play_count = 0
         self.tts_count = 0
         self.stop_count = 0
+        self.stream_start_count = 0
+        self.stream_write_count = 0
+        self.stream_end_count = 0
         self.last_pcm_bytes = 0
         self.last_telemetry: JSONDict = {}
         self.last_tts: JSONDict = {}
+        self.stream_utterance_id: str | None = None
+        self.stream_pcm = bytearray()
+
+    def configure(self, config: AudioBridgeConfig) -> None:
+        self.config = config
 
     def play_pcm(self, pcm: bytes, config: AudioBridgeConfig, telemetry: JSONDict) -> JSONDict:
         self.play_count += 1
@@ -310,8 +349,52 @@ class FakeSpeakerClient(SpeakerClient):
             "telemetry": telemetry,
         }
 
+    def start_stream(self, utterance_id: str, telemetry: JSONDict) -> JSONDict:
+        if self.stream_utterance_id is not None:
+            return {"ok": False, "error_message": "fake speaker stream is already active"}
+        self.stream_start_count += 1
+        self.stream_utterance_id = utterance_id
+        self.stream_pcm.clear()
+        self.last_telemetry = dict(telemetry)
+        return {
+            "ok": True,
+            "error_message": None,
+            "speaker": "fake",
+            "utterance_id": utterance_id,
+        }
+
+    def write_stream_pcm(self, pcm: bytes, telemetry: JSONDict) -> JSONDict:
+        if self.stream_utterance_id is None:
+            return {"ok": False, "error_message": "fake speaker stream is not active"}
+        self.stream_write_count += 1
+        self.stream_pcm.extend(pcm)
+        self.last_telemetry = dict(telemetry)
+        return {
+            "ok": True,
+            "error_message": None,
+            "speaker": "fake",
+            "utterance_id": self.stream_utterance_id,
+            "pcm_bytes": len(pcm),
+        }
+
+    def end_stream(self, telemetry: JSONDict) -> JSONDict:
+        if self.stream_utterance_id is None:
+            return {"ok": False, "error_message": "fake speaker stream is not active"}
+        utterance_id = self.stream_utterance_id
+        self.stream_end_count += 1
+        self.stream_utterance_id = None
+        self.last_telemetry = dict(telemetry)
+        return {
+            "ok": True,
+            "error_message": None,
+            "speaker": "fake",
+            "utterance_id": utterance_id,
+            "pcm_bytes": len(self.stream_pcm),
+        }
+
     def stop(self) -> JSONDict:
         self.stop_count += 1
+        self.stream_utterance_id = None
         return {"ok": True, "error_message": None, "speaker": "fake", "stop_count": self.stop_count}
 
     def health(self) -> JSONDict:
@@ -321,13 +404,35 @@ class FakeSpeakerClient(SpeakerClient):
             "play_count": self.play_count,
             "tts_count": self.tts_count,
             "stop_count": self.stop_count,
+            "streaming": True,
+            "stream_active": self.stream_utterance_id is not None,
+            "stream_start_count": self.stream_start_count,
+            "stream_write_count": self.stream_write_count,
+            "stream_end_count": self.stream_end_count,
         }
 
 
 class SubprocessSpeakerClient(SpeakerClient):
     """Speaker client that invokes an external G1 PlayStream helper."""
 
+    def __init__(self, config: AudioBridgeConfig | None = None) -> None:
+        self.config = config
+        self._stream_process: subprocess.Popen[bytes] | None = None
+        self._stream_lock = threading.RLock()
+        self._stream_stdout: queue.Queue[str] = queue.Queue()
+        self._stream_stdout_thread: threading.Thread | None = None
+        self._stream_stderr_thread: threading.Thread | None = None
+        self._stream_stderr: deque[str] = deque(maxlen=100)
+        self._active_stream_id: str | None = None
+        self._stream_start_count = 0
+        self._stream_write_count = 0
+        self._stream_end_count = 0
+
+    def configure(self, config: AudioBridgeConfig) -> None:
+        self.config = config
+
     def play_pcm(self, pcm: bytes, config: AudioBridgeConfig, telemetry: JSONDict) -> JSONDict:
+        self.configure(config)
         runner_error = self._runner_error(config)
         if runner_error is not None:
             return runner_error
@@ -401,6 +506,13 @@ class SubprocessSpeakerClient(SpeakerClient):
         }
 
     def tts(self, text: str, speaker_id: int, config: AudioBridgeConfig, telemetry: JSONDict) -> JSONDict:
+        self.configure(config)
+        if self._active_stream_id is not None:
+            return {
+                "ok": False,
+                "error_message": "cannot run native TTS while a PCM stream is active",
+                "speaker": "subprocess",
+            }
         runner_error = self._runner_error(config)
         if runner_error is not None:
             return runner_error
@@ -442,8 +554,283 @@ class SubprocessSpeakerClient(SpeakerClient):
             "telemetry": telemetry,
         }
 
+    def start_stream(self, utterance_id: str, telemetry: JSONDict) -> JSONDict:
+        with self._stream_lock:
+            if self._active_stream_id is not None:
+                return {
+                    "ok": False,
+                    "error_message": f"speaker stream is already active: {self._active_stream_id}",
+                    "speaker": "persistent_subprocess",
+                }
+            error = self._ensure_stream_process()
+            if error is not None:
+                return error
+            response = self._stream_command(f"START {utterance_id}")
+            if not response["ok"]:
+                return response
+            self._active_stream_id = utterance_id
+            self._stream_start_count += 1
+            return {
+                "ok": True,
+                "error_message": None,
+                "speaker": "persistent_subprocess",
+                "utterance_id": utterance_id,
+                "runner_response": response.get("runner_response"),
+                "telemetry": telemetry,
+            }
+
+    def write_stream_pcm(self, pcm: bytes, telemetry: JSONDict) -> JSONDict:
+        with self._stream_lock:
+            if self._active_stream_id is None:
+                return {
+                    "ok": False,
+                    "error_message": "speaker stream is not active",
+                    "speaker": "persistent_subprocess",
+                }
+            response = self._stream_command(f"PCM {len(pcm)}", pcm)
+            if response["ok"]:
+                self._stream_write_count += 1
+            response.update(
+                {
+                    "speaker": "persistent_subprocess",
+                    "utterance_id": self._active_stream_id,
+                    "pcm_bytes": len(pcm),
+                    "telemetry": telemetry,
+                }
+            )
+            return response
+
+    def end_stream(self, telemetry: JSONDict) -> JSONDict:
+        with self._stream_lock:
+            if self._active_stream_id is None:
+                return {
+                    "ok": False,
+                    "error_message": "speaker stream is not active",
+                    "speaker": "persistent_subprocess",
+                }
+            utterance_id = self._active_stream_id
+            response = self._stream_command("END")
+            if response["ok"]:
+                self._stream_end_count += 1
+                self._active_stream_id = None
+            response.update(
+                {
+                    "speaker": "persistent_subprocess",
+                    "utterance_id": utterance_id,
+                    "telemetry": telemetry,
+                }
+            )
+            return response
+
+    def stop(self) -> JSONDict:
+        with self._stream_lock:
+            process = self._stream_process
+            if process is None or process.poll() is not None:
+                self._active_stream_id = None
+                return {"ok": True, "error_message": None, "speaker": "persistent_subprocess"}
+            response = self._stream_command("STOP")
+            self._active_stream_id = None
+            response["speaker"] = "persistent_subprocess"
+            return response
+
+    def close(self) -> None:
+        with self._stream_lock:
+            process = self._stream_process
+            if process is None:
+                return
+            if process.poll() is None:
+                self._stream_command("QUIT")
+                try:
+                    process.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+            self._stream_process = None
+            self._active_stream_id = None
+
     def health(self) -> JSONDict:
-        return {"available": True, "type": "subprocess"}
+        process = self._stream_process
+        return {
+            "available": True,
+            "type": "persistent_subprocess",
+            "runner_started": process is not None,
+            "runner_alive": process is not None and process.poll() is None,
+            "runner_pid": process.pid if process is not None and process.poll() is None else None,
+            "streaming": True,
+            "stream_active": self._active_stream_id is not None,
+            "active_utterance_id": self._active_stream_id,
+            "stream_start_count": self._stream_start_count,
+            "stream_write_count": self._stream_write_count,
+            "stream_end_count": self._stream_end_count,
+            "stderr_tail": list(self._stream_stderr)[-10:],
+        }
+
+    def _ensure_stream_process(self) -> JSONDict | None:
+        config = self.config
+        if config is None:
+            return {
+                "ok": False,
+                "error_message": "speaker client is not configured",
+                "speaker": "persistent_subprocess",
+            }
+        runner_error = self._runner_error(config)
+        if runner_error is not None:
+            return runner_error
+        if self._stream_process is not None and self._stream_process.poll() is None:
+            return None
+
+        cmd = [
+            config.speaker_runner,
+            "--volume",
+            str(config.speaker_volume),
+            _volume_safety_flag(config.speaker_volume),
+            "--skip-tts",
+            "--skip-music",
+            "--stream-stdin",
+        ]
+        if config.speaker_reactive_led:
+            led_config = DEFAULT_REACTIVE_LED_CONFIG
+            cmd.extend(
+                [
+                    "--stream-reactive-led",
+                    "--led-refresh-hz",
+                    str(led_config.refresh_hz),
+                    "--led-end-to-dark-ms",
+                    str(led_config.end_to_dark_blue_ms),
+                    "--led-dark-to-bright-ms",
+                    str(led_config.dark_to_bright_blue_ms),
+                    "--led-bright-hold-ms",
+                    str(led_config.bright_blue_hold_ms),
+                ]
+            )
+        if config.speaker_iface:
+            cmd.extend(["--iface", config.speaker_iface])
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
+        except Exception as exc:  # noqa: BLE001 - structured bridge error.
+            self._terminate_stream_process()
+            return {
+                "ok": False,
+                "error_message": str(exc),
+                "speaker": "persistent_subprocess",
+                "cmd": cmd,
+            }
+        self._stream_process = process
+        self._stream_stdout = queue.Queue()
+        self._stream_stderr.clear()
+        self._stream_stdout_thread = threading.Thread(
+            target=self._read_stream_stdout,
+            args=(process,),
+            name="g1-speaker-runner-stdout",
+            daemon=True,
+        )
+        self._stream_stderr_thread = threading.Thread(
+            target=self._read_stream_stderr,
+            args=(process,),
+            name="g1-speaker-runner-stderr",
+            daemon=True,
+        )
+        self._stream_stdout_thread.start()
+        self._stream_stderr_thread.start()
+        response = self._next_stream_response(timeout_s=min(config.speaker_timeout_s, 10.0))
+        if response != "OK READY":
+            error = {
+                "ok": False,
+                "error_message": f"speaker runner did not become ready: {response or 'no response'}",
+                "speaker": "persistent_subprocess",
+                "cmd": cmd,
+                "stderr": "".join(self._stream_stderr)[-4000:],
+            }
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            self._stream_process = None
+            return error
+        return None
+
+    def _stream_command(self, header: str, payload: bytes = b"") -> JSONDict:
+        process = self._stream_process
+        config = self.config
+        if process is None or process.poll() is not None or process.stdin is None:
+            return {
+                "ok": False,
+                "error_message": "persistent speaker runner is not running",
+                "speaker": "persistent_subprocess",
+            }
+        try:
+            process.stdin.write(header.encode("utf-8") + b"\n")
+            if payload:
+                process.stdin.write(payload)
+            process.stdin.flush()
+            response = self._next_stream_response(
+                timeout_s=max(config.speaker_timeout_s if config is not None else 45.0, 1.0)
+            )
+        except Exception as exc:  # noqa: BLE001 - structured bridge error.
+            return {
+                "ok": False,
+                "error_message": str(exc),
+                "speaker": "persistent_subprocess",
+                "stderr": "".join(self._stream_stderr)[-4000:],
+            }
+        if not response:
+            self._terminate_stream_process()
+            return {
+                "ok": False,
+                "error_message": "persistent speaker runner response timed out",
+                "speaker": "persistent_subprocess",
+                "stderr": "".join(self._stream_stderr)[-4000:],
+            }
+        if response.startswith("OK ") or response == "OK":
+            return {"ok": True, "error_message": None, "runner_response": response}
+        return {
+            "ok": False,
+            "error_message": response[4:] if response.startswith("ERR ") else response or "runner closed stdout",
+            "speaker": "persistent_subprocess",
+            "runner_response": response,
+            "stderr": "".join(self._stream_stderr)[-4000:],
+        }
+
+    def _next_stream_response(self, timeout_s: float) -> str:
+        try:
+            return self._stream_stdout.get(timeout=max(timeout_s, 0.1))
+        except queue.Empty:
+            return ""
+
+    def _read_stream_stdout(self, process: subprocess.Popen[bytes]) -> None:
+        if process.stdout is None:
+            return
+        for raw_line in iter(process.stdout.readline, b""):
+            self._stream_stdout.put(raw_line.decode("utf-8", errors="replace").strip())
+
+    def _read_stream_stderr(self, process: subprocess.Popen[bytes]) -> None:
+        if process.stderr is None:
+            return
+        for raw_line in iter(process.stderr.readline, b""):
+            self._stream_stderr.append(raw_line.decode("utf-8", errors="replace"))
+
+    def _terminate_stream_process(self) -> None:
+        process = self._stream_process
+        self._stream_process = None
+        self._active_stream_id = None
+        if process is None or process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
 
     @staticmethod
     def _runner_error(config: AudioBridgeConfig) -> JSONDict | None:
@@ -456,13 +843,19 @@ class SubprocessSpeakerClient(SpeakerClient):
         if config.speaker_runner.endswith("/"):
             return {
                 "ok": False,
-                "error_message": f"speaker_runner points to a directory, not an executable: {config.speaker_runner}",
+                "error_message": (
+                    "speaker_runner points to a directory, not an executable: "
+                    f"{config.speaker_runner}"
+                ),
                 "speaker": "subprocess",
             }
         return None
 
     @staticmethod
-    def _run(cmd: list[str], config: AudioBridgeConfig) -> tuple[subprocess.CompletedProcess[str] | None, JSONDict | None]:
+    def _run(
+        cmd: list[str],
+        config: AudioBridgeConfig,
+    ) -> tuple[subprocess.CompletedProcess[str] | None, JSONDict | None]:
         try:
             completed = subprocess.run(
                 cmd,
@@ -491,6 +884,8 @@ class AudioSessionManager:
     mic_receiver: G1MicMulticastReceiver | None = None
     _sessions: dict[str, JSONDict] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _output_lock: threading.Lock = field(default_factory=threading.Lock)
+    _output_stream: QueuedSpeakerOutput | None = None
 
     def __post_init__(self) -> None:
         max_frames = max(1, int(self.config.ring_seconds * 1000.0 / max(self.config.mic_chunk_ms, 1)))
@@ -499,7 +894,10 @@ class AudioSessionManager:
         if self.mic_receiver is None:
             self.mic_receiver = G1MicMulticastReceiver(self.config, self.ring)
         if self.speaker_client is None:
-            self.speaker_client = FakeSpeakerClient() if self.config.fake_speaker else SubprocessSpeakerClient()
+            self.speaker_client = (
+                FakeSpeakerClient() if self.config.fake_speaker else SubprocessSpeakerClient(self.config)
+            )
+        self.speaker_client.configure(self.config)
 
     def capabilities(self) -> JSONDict:
         transport = ["http_segment_fallback"]
@@ -521,6 +919,16 @@ class AudioSessionManager:
             "sample_width": self.config.sample_width,
             "speaker_volume": self.config.speaker_volume,
             "speaker_peak_target": self.config.speaker_peak_target,
+            "streaming": {
+                "protocol": "output.start/binary/output.end",
+                "persistent_runner": True,
+                "chunk_ms": self.config.speaker_stream_chunk_ms,
+                "prebuffer_ms": self.config.speaker_stream_prebuffer_ms,
+                "send_lead_ms": self.config.speaker_stream_send_lead_ms,
+                "queue_seconds": self.config.speaker_stream_queue_s,
+                "drain_ms": self.config.speaker_stream_drain_ms,
+                "normalization": "fixed_gain_per_utterance",
+            },
             "speaker_led": reactive_led_capabilities(self.config.speaker_reactive_led),
             "tts": {
                 "languages": list(TTS_SPEAKER_IDS),
@@ -535,6 +943,8 @@ class AudioSessionManager:
         assert self.ring is not None
         assert self.mic_receiver is not None
         assert self.speaker_client is not None
+        with self._output_lock:
+            output_stream = self._output_stream.status() if self._output_stream is not None else None
         return {
             "ok": True,
             "enabled": self.config.enabled,
@@ -543,6 +953,7 @@ class AudioSessionManager:
             "sessions": list(self._sessions.values()),
             "mic": self.mic_receiver.health(),
             "speaker": self.speaker_client.health(),
+            "output_stream": output_stream,
             "ring": self.ring.stats(),
         }
 
@@ -659,6 +1070,102 @@ class AudioSessionManager:
         assert self.speaker_client is not None
         return self.speaker_client.play_pcm(pcm, self.config, telemetry)
 
+    def start_output_stream(self, payload: Mapping[str, Any] | None = None) -> JSONDict:
+        if not self.config.enabled:
+            return self._disabled("audio is disabled; start bridge with --audio-enabled")
+        options = dict(payload or {})
+        utterance_id = str(options.get("utterance_id") or uuid.uuid4())
+        if not 1 <= len(utterance_id) <= 128 or any(
+            not (character.isalnum() or character in "._:-") for character in utterance_id
+        ):
+            return {
+                "ok": False,
+                "error_message": (
+                    "utterance_id must contain only letters, digits, '.', '_', ':', or '-'"
+                ),
+            }
+        normalize = bool(options.get("normalize", True))
+        with self._output_lock:
+            if self._output_stream is not None and self._output_stream.complete:
+                self._output_stream = None
+            if self._output_stream is not None:
+                current = self._output_stream.status()
+                return {
+                    "ok": False,
+                    "error_message": "speaker output stream is already active",
+                    "utterance_id": utterance_id,
+                    "active_stream": current,
+                }
+            assert self.speaker_client is not None
+            output = QueuedSpeakerOutput(
+                speaker=self.speaker_client,
+                utterance_id=utterance_id,
+                normalize=normalize,
+                config=SpeakerOutputConfig(
+                    sample_rate=self.config.sample_rate,
+                    channels=self.config.channels,
+                    sample_width=self.config.sample_width,
+                    chunk_ms=self.config.speaker_stream_chunk_ms,
+                    prebuffer_ms=self.config.speaker_stream_prebuffer_ms,
+                    send_lead_ms=self.config.speaker_stream_send_lead_ms,
+                    queue_seconds=self.config.speaker_stream_queue_s,
+                    drain_ms=self.config.speaker_stream_drain_ms,
+                    target_peak=self.config.speaker_peak_target,
+                    completion_timeout_s=self.config.speaker_timeout_s,
+                ),
+            )
+            self._output_stream = output
+            result = output.start()
+        result["format"] = self._format_payload()
+        return result
+
+    def write_output_stream_pcm(
+        self,
+        pcm: bytes,
+        payload: Mapping[str, Any] | None = None,
+    ) -> JSONDict:
+        options = dict(payload or {})
+        with self._output_lock:
+            output = self._output_stream
+        if output is None:
+            return {"ok": False, "error_message": "speaker output stream is not active"}
+        utterance_id = options.get("utterance_id")
+        if utterance_id is not None and str(utterance_id) != output.utterance_id:
+            return {
+                "ok": False,
+                "error_message": (
+                    f"utterance_id mismatch: active={output.utterance_id} requested={utterance_id}"
+                ),
+            }
+        result = output.write(pcm)
+        if output.complete:
+            with self._output_lock:
+                if self._output_stream is output:
+                    self._output_stream = None
+        result["pcm_bytes"] = len(pcm)
+        return result
+
+    def end_output_stream(self, payload: Mapping[str, Any] | None = None) -> JSONDict:
+        options = dict(payload or {})
+        with self._output_lock:
+            output = self._output_stream
+        if output is None:
+            return {"ok": False, "error_message": "speaker output stream is not active"}
+        utterance_id = options.get("utterance_id")
+        if utterance_id is not None and str(utterance_id) != output.utterance_id:
+            return {
+                "ok": False,
+                "error_message": (
+                    f"utterance_id mismatch: active={output.utterance_id} requested={utterance_id}"
+                ),
+            }
+        result = output.finish(timeout_s=_float(options.get("timeout_s"), self.config.speaker_timeout_s))
+        if output.complete:
+            with self._output_lock:
+                if self._output_stream is output:
+                    self._output_stream = None
+        return result
+
     def tts(self, payload: Mapping[str, Any] | None = None) -> JSONDict:
         if not self.config.enabled:
             return self._disabled("audio is disabled; start bridge with --audio-enabled")
@@ -694,12 +1201,19 @@ class AudioSessionManager:
 
     def stop_output(self) -> JSONDict:
         assert self.speaker_client is not None
+        with self._output_lock:
+            output = self._output_stream
+            self._output_stream = None
+        if output is not None:
+            return output.stop()
         return self.speaker_client.stop()
 
     def close(self) -> None:
         if self.mic_receiver is not None:
             self.mic_receiver.stop()
         self.stop_output()
+        if self.speaker_client is not None:
+            self.speaker_client.close()
 
     def push_input_pcm_for_test(self, pcm: bytes) -> None:
         assert self.ring is not None

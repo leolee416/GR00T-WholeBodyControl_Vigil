@@ -146,6 +146,16 @@ Response stable fields:
       "sample_width": 2,
       "speaker_volume": 100,
       "speaker_peak_target": 27800,
+      "streaming": {
+        "protocol": "output.start/binary/output.end",
+        "persistent_runner": true,
+        "chunk_ms": 200,
+        "prebuffer_ms": 400,
+        "send_lead_ms": 20,
+        "queue_seconds": 3.0,
+        "drain_ms": 150,
+        "normalization": "fixed_gain_per_utterance"
+      },
       "speaker_led": {
         "enabled": true,
         "source": "outgoing_pcm_amplitude",
@@ -354,6 +364,37 @@ AGENT/VLT OMNI PCM chunks
 
 Streaming 是主路径。几十秒整段音频只作为 fallback/debug，因为它至少会增加“录满音频 + 上传/解码 + 播放排队”的延迟，不适合实时对话。
 
+输出 streaming 使用显式 utterance 生命周期。连接建立后先发送：
+
+```json
+{"type":"output.start","utterance_id":"utt-123","normalize":true}
+```
+
+随后发送任意数量的 binary PCM16 frame，最后发送：
+
+```json
+{"type":"output.end","utterance_id":"utt-123"}
+```
+
+Bridge 会先做有界预缓冲，再把上游小 frame 聚合成固定播放块。同一 utterance
+只启动一次 persistent runner、只创建一个 G1 `stream_id`，并且只在 `output.end`
+排空队列后调用一次 `PlayStop`。每个 binary frame 返回 `output.result`；当
+`payload.backpressure=true` 时，上游必须暂停发送并重试，bridge 不会静默丢音频。
+
+控制消息语义：
+
+| message | 语义 |
+| --- | --- |
+| `output.start` | 创建一个输出 utterance；同一时间只允许一个 |
+| binary PCM | 加入当前 utterance 的有界队列 |
+| `output.end` | 正常排空，`PlayStop`，执行一次 LED 收尾 |
+| `output.stop` | 立即清队列并停止，不等待正常收尾 |
+| `session.stop` | 停止输入和输出并关闭当前 audio session |
+
+未发送 `output.start` 的单个 binary message 仍走旧 one-shot 兼容路径，不具备跨
+message 无缝保证。Streaming 默认使用首个 400 ms prebuffer 计算一次固定 gain，
+后续 chunk 沿用该 gain，避免逐 chunk peak normalization 造成音量抽动。
+
 启用 `--audio-speaker-reactive-led` 后，PCM/WAV 播放期间由同一 runner 根据输出振幅
 以 50 Hz 驱动橙黄灯效，结束后过渡到蓝色。该功能要求 LED-aware runner；native
 `TtsMaker` 不提供合成 PCM，所以 `/audio/tts` 不具备精确的振幅联动。
@@ -400,6 +441,11 @@ python gear_sonic_deploy/scripts/run_vigil_bridge.py \
   --audio-mic-interface-ip 192.168.123.164 \
   --audio-speaker-iface enP8p1s0 \
   --audio-speaker-volume 100 \
+  --audio-speaker-stream-chunk-ms 200 \
+  --audio-speaker-stream-prebuffer-ms 400 \
+  --audio-speaker-stream-send-lead-ms 20 \
+  --audio-speaker-stream-queue-s 3 \
+  --audio-speaker-stream-drain-ms 150 \
   --audio-speaker-runner /home/unitree/g1_audio_tests/vigil_led_speaker/build/g1_vigil_led_speaker_runner \
   --audio-speaker-reactive-led
 ```

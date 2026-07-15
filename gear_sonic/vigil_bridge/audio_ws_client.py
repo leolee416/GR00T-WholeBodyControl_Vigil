@@ -51,14 +51,32 @@ async def run_client(args: argparse.Namespace) -> None:
 
     mic_chunks: list[bytes] = []
     json_messages: list[dict] = []
+
+    async def recv_until_type(websocket, message_type: str, timeout_s: float = 60.0) -> dict:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            message = await asyncio.wait_for(
+                websocket.recv(),
+                timeout=max(0.01, deadline - time.monotonic()),
+            )
+            if isinstance(message, bytes):
+                mic_chunks.append(message)
+                continue
+            payload = json.loads(message)
+            json_messages.append(payload)
+            print(json.dumps(payload, ensure_ascii=False))
+            if payload.get("type") == message_type:
+                return payload
+        raise TimeoutError(f"timed out waiting for {message_type}")
+
     async with websockets.connect(args.url, max_size=None) as websocket:
         started = await websocket.recv()
         print(started)
 
+        output_pcm: bytes | None = None
         if args.send_wav:
             output_pcm = read_pcm16_wav(args.send_wav)
             print(f"[client] sending WAV PCM bytes={len(output_pcm)}")
-            await websocket.send(output_pcm)
         elif args.send_tone:
             output_pcm = generate_tone_pcm(
                 duration_s=args.tone_duration,
@@ -67,7 +85,39 @@ async def run_client(args: argparse.Namespace) -> None:
                 peak=args.tone_peak,
             )
             print(f"[client] sending tone PCM bytes={len(output_pcm)}")
+
+        if output_pcm is not None and args.legacy_one_shot:
             await websocket.send(output_pcm)
+        elif output_pcm is not None:
+            utterance_id = f"smoke-{int(time.time() * 1000)}"
+            await websocket.send(
+                json.dumps(
+                    {
+                        "type": "output.start",
+                        "utterance_id": utterance_id,
+                        "normalize": not args.no_normalize,
+                    }
+                )
+            )
+            start_result = await recv_until_type(websocket, "output.start.result")
+            if not start_result.get("payload", {}).get("ok", False):
+                raise RuntimeError(f"output.start failed: {start_result}")
+            chunk_bytes = max(2, int(32000 * args.output_chunk_ms / 1000.0))
+            chunk_bytes -= chunk_bytes % 2
+            for offset in range(0, len(output_pcm), chunk_bytes):
+                chunk = output_pcm[offset : offset + chunk_bytes]
+                await websocket.send(chunk)
+                accepted = await recv_until_type(websocket, "output.result")
+                if not accepted.get("payload", {}).get("ok", False):
+                    raise RuntimeError(f"output chunk rejected: {accepted}")
+                if args.pace_output:
+                    await asyncio.sleep(len(chunk) / 32000.0)
+            await websocket.send(
+                json.dumps({"type": "output.end", "utterance_id": utterance_id})
+            )
+            end_result = await recv_until_type(websocket, "output.end.result")
+            if not end_result.get("payload", {}).get("ok", False):
+                raise RuntimeError(f"output.end failed: {end_result}")
 
         deadline = time.monotonic() + max(args.listen_seconds, 0.0)
         while time.monotonic() < deadline:
@@ -114,6 +164,29 @@ def main() -> None:
     parser.add_argument("--tone-frequency", type=float, default=440.0)
     parser.add_argument("--tone-peak", type=int, default=12000)
     parser.add_argument("--send-wav", default=None, help="Send a 16 kHz mono PCM16 WAV to robot speaker.")
+    parser.add_argument(
+        "--output-chunk-ms",
+        type=int,
+        default=40,
+        help="PCM WebSocket frame duration used by persistent output streaming.",
+    )
+    parser.add_argument(
+        "--no-pace-output",
+        dest="pace_output",
+        action="store_false",
+        help="Send frames as fast as accepted; useful only for short queue/backpressure tests.",
+    )
+    parser.set_defaults(pace_output=True)
+    parser.add_argument(
+        "--no-normalize",
+        action="store_true",
+        help="Disable the bridge's fixed per-utterance PCM gain.",
+    )
+    parser.add_argument(
+        "--legacy-one-shot",
+        action="store_true",
+        help="Send one unbracketed binary message through the compatibility path.",
+    )
     args = parser.parse_args()
     asyncio.run(run_client(args))
 

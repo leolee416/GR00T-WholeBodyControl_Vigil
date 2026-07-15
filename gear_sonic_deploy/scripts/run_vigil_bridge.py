@@ -188,6 +188,36 @@ def main() -> None:
         help="Drive the G1 speaker LED from outgoing PCM amplitude using the LED-aware runner.",
     )
     parser.add_argument(
+        "--audio-speaker-stream-chunk-ms",
+        type=int,
+        default=200,
+        help="Persistent PlayStream chunk duration. Tune on hardware; default 200 ms.",
+    )
+    parser.add_argument(
+        "--audio-speaker-stream-prebuffer-ms",
+        type=int,
+        default=400,
+        help="PCM buffered before persistent playback starts; default 400 ms.",
+    )
+    parser.add_argument(
+        "--audio-speaker-stream-send-lead-ms",
+        type=int,
+        default=20,
+        help="Send each PlayStream block slightly before the prior block drains.",
+    )
+    parser.add_argument(
+        "--audio-speaker-stream-queue-s",
+        type=float,
+        default=3.0,
+        help="Maximum queued outgoing PCM before applying backpressure.",
+    )
+    parser.add_argument(
+        "--audio-speaker-stream-drain-ms",
+        type=int,
+        default=150,
+        help="Final hardware drain margin before PlayStop.",
+    )
+    parser.add_argument(
         "--audio-fake-speaker",
         action="store_true",
         help="Use a fake speaker client for bridge tests instead of hardware playback.",
@@ -199,6 +229,20 @@ def main() -> None:
     args = parser.parse_args()
     if args.audio_speaker_reactive_led and not args.audio_speaker_runner:
         raise SystemExit("--audio-speaker-reactive-led requires --audio-speaker-runner")
+    if args.audio_speaker_stream_chunk_ms <= 0:
+        raise SystemExit("--audio-speaker-stream-chunk-ms must be positive")
+    if args.audio_speaker_stream_prebuffer_ms < args.audio_speaker_stream_chunk_ms:
+        raise SystemExit(
+            "--audio-speaker-stream-prebuffer-ms must be >= --audio-speaker-stream-chunk-ms"
+        )
+    if not 0 <= args.audio_speaker_stream_send_lead_ms < args.audio_speaker_stream_chunk_ms:
+        raise SystemExit(
+            "--audio-speaker-stream-send-lead-ms must be in [0, stream-chunk-ms)"
+        )
+    if args.audio_speaker_stream_queue_s <= 0.0:
+        raise SystemExit("--audio-speaker-stream-queue-s must be positive")
+    if args.audio_speaker_stream_drain_ms < 0:
+        raise SystemExit("--audio-speaker-stream-drain-ms must be >= 0")
     service = _create_service(args)
     audio_ws_server = _start_audio_ws_if_requested(args, service)
     try:
@@ -317,6 +361,11 @@ def _attach_audio(args: argparse.Namespace, service: VigilBridgeService) -> Vigi
                 speaker_runner=args.audio_speaker_runner,
                 speaker_iface=args.audio_speaker_iface,
                 speaker_reactive_led=args.audio_speaker_reactive_led,
+                speaker_stream_chunk_ms=args.audio_speaker_stream_chunk_ms,
+                speaker_stream_prebuffer_ms=args.audio_speaker_stream_prebuffer_ms,
+                speaker_stream_send_lead_ms=args.audio_speaker_stream_send_lead_ms,
+                speaker_stream_queue_s=args.audio_speaker_stream_queue_s,
+                speaker_stream_drain_ms=args.audio_speaker_stream_drain_ms,
                 fake_speaker=args.audio_fake_speaker or (
                     args.backend == "dry_run" and not args.audio_speaker_runner
                 ),

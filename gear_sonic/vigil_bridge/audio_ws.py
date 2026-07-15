@@ -108,7 +108,10 @@ class AudioWebSocketServer:
                     await task
         finally:
             self.manager.unsubscribe_input(subscriber)
-            self.manager.stop_session({"session_id": session.get("session_id"), "stop_output": True})
+            await asyncio.to_thread(
+                self.manager.stop_session,
+                {"session_id": session.get("session_id"), "stop_output": True},
+            )
 
     async def _produce_mic_frames(self, websocket: Any, subscriber: queue.Queue[AudioFrame]) -> None:
         while True:
@@ -120,28 +123,81 @@ class AudioWebSocketServer:
             await websocket.send(frame.pcm)
 
     async def _consume_output_frames(self, websocket: Any) -> None:
+        active_utterance_id: str | None = None
         async for message in websocket:
             if isinstance(message, bytes):
                 try:
-                    result = self.manager.play_output_pcm(message, normalize=True)
+                    if active_utterance_id is None:
+                        # Backward-compatible one-shot behavior. New streaming clients
+                        # must bracket binary frames with output.start/output.end.
+                        result = await asyncio.to_thread(
+                            self.manager.play_output_pcm,
+                            message,
+                            True,
+                        )
+                    else:
+                        result = self.manager.write_output_stream_pcm(
+                            message,
+                            {"utterance_id": active_utterance_id},
+                        )
                 except Exception as exc:  # noqa: BLE001 - keep the socket alive and report failure.
                     result = {
                         "ok": False,
                         "error_message": str(exc),
                     }
+                output_state = str(result.get("telemetry", {}).get("state", ""))
+                if active_utterance_id is not None and output_state in {
+                    "complete",
+                    "failed",
+                    "stopped",
+                }:
+                    active_utterance_id = None
                 await websocket.send(json.dumps({"type": "output.result", "payload": result}))
                 continue
             payload = json.loads(message)
             message_type = str(payload.get("type", ""))
             if message_type == "ping":
                 await websocket.send(json.dumps({"type": "pong", "payload": self.manager.health()}))
+            elif message_type == "output.start":
+                if active_utterance_id is not None:
+                    result = {
+                        "ok": False,
+                        "error_message": f"output stream is already active: {active_utterance_id}",
+                    }
+                else:
+                    result = self.manager.start_output_stream(payload)
+                    if bool(result.get("ok", False)):
+                        active_utterance_id = str(result["utterance_id"])
+                await websocket.send(json.dumps({"type": "output.start.result", "payload": result}))
+            elif message_type == "output.end":
+                if active_utterance_id is None:
+                    result = {"ok": False, "error_message": "output stream is not active"}
+                else:
+                    end_payload = dict(payload)
+                    end_payload.setdefault("utterance_id", active_utterance_id)
+                    result = await asyncio.to_thread(
+                        self.manager.end_output_stream,
+                        end_payload,
+                    )
+                    output_state = str(result.get("telemetry", {}).get("state", ""))
+                    if bool(result.get("ok", False)) or output_state in {
+                        "complete",
+                        "failed",
+                        "stopped",
+                    }:
+                        active_utterance_id = None
+                await websocket.send(json.dumps({"type": "output.end.result", "payload": result}))
             elif message_type == "output.stop":
+                result = await asyncio.to_thread(self.manager.stop_output)
+                active_utterance_id = None
                 await websocket.send(
-                    json.dumps({"type": "output.stop.result", "payload": self.manager.stop_output()})
+                    json.dumps({"type": "output.stop.result", "payload": result})
                 )
             elif message_type == "session.stop":
+                result = await asyncio.to_thread(self.manager.stop_session, payload)
+                active_utterance_id = None
                 await websocket.send(
-                    json.dumps({"type": "session.stop.result", "payload": self.manager.stop_session(payload)})
+                    json.dumps({"type": "session.stop.result", "payload": result})
                 )
                 return
             else:

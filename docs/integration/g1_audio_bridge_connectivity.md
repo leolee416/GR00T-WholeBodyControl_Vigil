@@ -297,6 +297,29 @@ TTS audio on the Host/VLT/OMNI side as 16 kHz mono PCM16 and send it through
 `/audio/output_segment` or WebSocket binary output. That path is normalized to
 peak `27800` before `AudioClient.PlayStream`.
 
+For continuous OMNI/VLT output, bracket WebSocket binary frames with
+`output.start` and `output.end`. The bridge then keeps one runner process,
+`AudioClient`, and G1 `stream_id` for the entire utterance. Raw binary messages
+without `output.start` intentionally retain the old one-shot compatibility
+behavior.
+
+After deploying a runner containing persistent mode, exercise the exact path
+with a WAV or tone:
+
+```bash
+PYTHONPATH=$PWD python3 -m gear_sonic.vigil_bridge.audio_ws_client \
+  --url ws://127.0.0.1:8766/audio/ws \
+  --send-wav omni_tts_16k_mono_pcm16.wav \
+  --output-chunk-ms 40 \
+  --listen-seconds 2
+```
+
+Expected bridge health during playback includes
+`speaker.type=persistent_subprocess`, a stable `runner_pid`, one increment of
+`stream_start_count`, multiple `stream_write_count` increments, and one
+`stream_end_count` increment. `output_stream.telemetry.underrun_count` should
+remain zero.
+
 ## Troubleshooting Matrix
 
 | Symptom | Most likely cause | Check/fix |
@@ -326,6 +349,15 @@ Recompile is only needed if the C++ speaker runner source changes, for example:
 
 ```text
 /home/unitree/g1_audio_tests/speaker_loud_music/g1_speaker_loud_music_runner.cpp
+```
+
+The persistent PCM protocol changes the checked-in C++ runner, so upgrading
+from the old per-segment implementation requires one rebuild:
+
+```bash
+cmake -S gear_sonic/vigil_bridge/native_audio \
+  -B /home/unitree/g1_audio_tests/vigil_led_speaker/build
+cmake --build /home/unitree/g1_audio_tests/vigil_led_speaker/build -j2
 ```
 
 Normal OMNI audio output and native TTS requests through the rebuilt runner do

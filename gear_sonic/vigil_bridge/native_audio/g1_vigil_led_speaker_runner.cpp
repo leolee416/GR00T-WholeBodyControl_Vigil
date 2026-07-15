@@ -1,11 +1,16 @@
 #include <algorithm>
+#include <condition_variable>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -28,6 +33,8 @@ struct Args {
   int volume = 80;
   bool skip_tts = false;
   bool skip_music = false;
+  bool stream_stdin = false;
+  bool stream_reactive_led = false;
   bool allow_volume_100 = false;
   bool allow_volume_over_100 = false;
   std::string led_plan;
@@ -46,6 +53,7 @@ struct Color {
 constexpr Color kDarkBlue{0, 0, 40};
 constexpr Color kBrightBlue{0, 0, 255};
 constexpr const char* kAppName = "g1_vigil_led_speaker";
+constexpr double kPi = 3.14159265358979323846;
 
 struct WavData {
   int sample_rate = 0;
@@ -108,6 +116,10 @@ Args ParseArgs(int argc, char** argv) {
       args.skip_tts = true;
     } else if (key == "--skip-music") {
       args.skip_music = true;
+    } else if (key == "--stream-stdin") {
+      args.stream_stdin = true;
+    } else if (key == "--stream-reactive-led") {
+      args.stream_reactive_led = true;
     } else if (key == "--allow-volume-100") {
       args.allow_volume_100 = true;
     } else if (key == "--allow-volume-over-100") {
@@ -156,6 +168,9 @@ Args ParseArgs(int argc, char** argv) {
   if (args.led_end_to_dark_ms < 0 || args.led_dark_to_bright_ms < 0 ||
       args.led_bright_hold_ms < 0) {
     throw std::runtime_error("LED end animation durations must be non-negative");
+  }
+  if (args.stream_reactive_led && !args.stream_stdin) {
+    throw std::runtime_error("--stream-reactive-led requires --stream-stdin");
   }
   if (args.volume > 90 && !args.allow_volume_100 &&
       !args.allow_volume_over_100) {
@@ -278,7 +293,8 @@ void FadeLed(unitree::robot::g1::AudioClient& client, const Color& from,
 }
 
 void ApplyEndAnimation(unitree::robot::g1::AudioClient& client,
-                       const Color& speech_color, const Args& args) {
+                       const Color& speech_color, const Args& args,
+                       std::ostream& output = std::cout) {
   // Blue is introduced only after PlayStop has completed.
   FadeLed(client, speech_color, kDarkBlue, args.led_end_to_dark_ms,
           args.led_refresh_hz);
@@ -286,11 +302,11 @@ void ApplyEndAnimation(unitree::robot::g1::AudioClient& client,
           args.led_refresh_hz);
   std::this_thread::sleep_for(
       std::chrono::milliseconds(args.led_bright_hold_ms));
-  std::cout << "[RESULT] LedEndAnimation to_dark_ms="
-            << args.led_end_to_dark_ms
-            << " dark_to_bright_ms=" << args.led_dark_to_bright_ms
-            << " bright_hold_ms=" << args.led_bright_hold_ms
-            << " final_rgb=0,0,255" << std::endl;
+  output << "[RESULT] LedEndAnimation to_dark_ms="
+         << args.led_end_to_dark_ms
+         << " dark_to_bright_ms=" << args.led_dark_to_bright_ms
+         << " bright_hold_ms=" << args.led_bright_hold_ms
+         << " final_rgb=0,0,255" << std::endl;
 }
 
 int32_t PlayWavWithLedPlan(unitree::robot::g1::AudioClient& client,
@@ -372,6 +388,340 @@ int32_t PlayWavWithLedPlan(unitree::robot::g1::AudioClient& client,
   }
 }
 
+Color StreamingSpeechColor(double level) {
+  level = std::clamp(level, 0.0, 1.0);
+  const Color low{46, 14, 0};
+  const Color mid{158, 79, 0};
+  const Color high{255, 234, 0};
+  if (level <= 0.5) {
+    return MixColor(low, mid, level * 2.0);
+  }
+  return MixColor(mid, high, (level - 0.5) * 2.0);
+}
+
+class StreamingLedPlanner {
+ public:
+  explicit StreamingLedPlanner(int refresh_hz)
+      : refresh_hz_(refresh_hz) {}
+
+  void Reset() {
+    rms_reference_ = 8000.0;
+    envelope_ = 0.0;
+    display_ = 0.0;
+    frame_index_ = 0;
+  }
+
+  std::vector<Color> Plan(const std::vector<uint8_t>& pcm) {
+    constexpr int kSampleRate = 16000;
+    constexpr int kSampleWidth = 2;
+    const size_t frame_samples = kSampleRate / refresh_hz_;
+    const size_t sample_count = pcm.size() / kSampleWidth;
+    std::vector<Color> colors;
+    colors.reserve((sample_count + frame_samples - 1) / frame_samples);
+    for (size_t start = 0; start < sample_count; start += frame_samples) {
+      const size_t end = std::min(start + frame_samples, sample_count);
+      double sum_sq = 0.0;
+      for (size_t index = start; index < end; ++index) {
+        const size_t offset = index * 2;
+        const int16_t sample = static_cast<int16_t>(
+            static_cast<uint16_t>(pcm[offset]) |
+            (static_cast<uint16_t>(pcm[offset + 1]) << 8));
+        sum_sq += static_cast<double>(sample) * sample;
+      }
+      const double rms = end > start
+                             ? std::sqrt(sum_sq / static_cast<double>(end - start))
+                             : 0.0;
+      const double reference_alpha = rms > rms_reference_ ? 0.08 : 0.002;
+      rms_reference_ += reference_alpha * (std::max(rms, 2000.0) - rms_reference_);
+      const double noise_floor = std::max(180.0, rms_reference_ * 0.035);
+      const double linear = std::clamp(
+          (rms - noise_floor) / std::max(rms_reference_ - noise_floor, 1.0),
+          0.0, 1.0);
+      const double target = std::pow(linear, 1.8);
+      const double envelope_alpha = target > envelope_ ? 0.18 : 0.045;
+      envelope_ += envelope_alpha * (target - envelope_);
+      display_ += 0.18 * (envelope_ - display_);
+      const double breath =
+          0.5 - 0.5 * std::cos(2.0 * kPi * 0.3 * frame_index_ / refresh_hz_);
+      const double level = std::max(0.12, display_) * (0.9 + 0.1 * breath);
+      colors.push_back(StreamingSpeechColor(level));
+      ++frame_index_;
+    }
+    return colors;
+  }
+
+ private:
+  int refresh_hz_;
+  double rms_reference_ = 8000.0;
+  double envelope_ = 0.0;
+  double display_ = 0.0;
+  uint64_t frame_index_ = 0;
+};
+
+class StreamingLedPlayer {
+ public:
+  StreamingLedPlayer(unitree::robot::g1::AudioClient& client,
+                     std::mutex& client_mutex, const Args& args)
+      : client_(client), client_mutex_(client_mutex), args_(args),
+        planner_(args.led_refresh_hz), thread_(&StreamingLedPlayer::Run, this) {}
+
+  ~StreamingLedPlayer() { Shutdown(); }
+
+  void StartUtterance() {
+    WaitUntilIdle();
+    planner_.Reset();
+    {
+      std::lock_guard<std::mutex> lock(client_mutex_);
+      SetLedOrThrow(client_, StreamingSpeechColor(0.12));
+    }
+  }
+
+  void EnqueuePcm(const std::vector<uint8_t>& pcm) {
+    std::vector<Color> colors = planner_.Plan(pcm);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      for (const Color& color : colors) {
+        colors_.push_back(color);
+      }
+    }
+    cv_.notify_all();
+  }
+
+  void WaitUntilIdle() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    idle_cv_.wait(lock, [this] { return colors_.empty() && !applying_color_; });
+  }
+
+  void Abort() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      colors_.clear();
+    }
+    cv_.notify_all();
+    WaitUntilIdle();
+    std::lock_guard<std::mutex> lock(client_mutex_);
+    client_.LedControl(kBrightBlue.r, kBrightBlue.g, kBrightBlue.b);
+  }
+
+  void FinishUtterance() {
+    WaitUntilIdle();
+    std::lock_guard<std::mutex> lock(client_mutex_);
+    ApplyEndAnimation(client_, last_color_, args_, std::cerr);
+  }
+
+  void Shutdown() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopping_) {
+        return;
+      }
+      stopping_ = true;
+      colors_.clear();
+    }
+    cv_.notify_all();
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+  }
+
+ private:
+  void Run() {
+    const auto frame_duration =
+        std::chrono::microseconds(1000000 / args_.led_refresh_hz);
+    auto next_frame = std::chrono::steady_clock::now();
+    while (true) {
+      Color color;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this] { return stopping_ || !colors_.empty(); });
+        if (stopping_) {
+          applying_color_ = false;
+          idle_cv_.notify_all();
+          return;
+        }
+        color = colors_.front();
+        colors_.pop_front();
+        applying_color_ = true;
+      }
+      next_frame = std::max(next_frame + frame_duration,
+                            std::chrono::steady_clock::now());
+      {
+        std::lock_guard<std::mutex> lock(client_mutex_);
+        const int32_t ret = client_.LedControl(color.r, color.g, color.b);
+        if (ret != 0) {
+          std::cerr << "[WARN] streaming LedControl failed: " << ret
+                    << std::endl;
+        }
+      }
+      last_color_ = color;
+      std::this_thread::sleep_until(next_frame);
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        applying_color_ = false;
+        if (colors_.empty()) {
+          idle_cv_.notify_all();
+          next_frame = std::chrono::steady_clock::now();
+        }
+      }
+    }
+  }
+
+  unitree::robot::g1::AudioClient& client_;
+  std::mutex& client_mutex_;
+  Args args_;
+  StreamingLedPlanner planner_;
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  std::condition_variable idle_cv_;
+  std::deque<Color> colors_;
+  bool applying_color_ = false;
+  bool stopping_ = false;
+  Color last_color_{46, 14, 0};
+  std::thread thread_;
+};
+
+bool ReadExact(std::istream& input, std::vector<uint8_t>& output,
+               size_t size) {
+  output.resize(size);
+  input.read(reinterpret_cast<char*>(output.data()),
+             static_cast<std::streamsize>(size));
+  return input.good() || static_cast<size_t>(input.gcount()) == size;
+}
+
+void ProtocolOk(const std::string& message) {
+  std::cout << "OK " << message << std::endl;
+}
+
+void ProtocolError(const std::string& message) {
+  std::cout << "ERR " << message << std::endl;
+}
+
+int RunPersistentPcmStream(unitree::robot::g1::AudioClient& client,
+                           const Args& args) {
+  std::mutex client_mutex;
+  std::unique_ptr<StreamingLedPlayer> led;
+  if (args.stream_reactive_led) {
+    led = std::make_unique<StreamingLedPlayer>(client, client_mutex, args);
+  }
+  std::string active_stream_id;
+  ProtocolOk("READY");
+
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    std::istringstream header(line);
+    std::string command;
+    header >> command;
+    try {
+      if (command == "START") {
+        std::string stream_id;
+        header >> stream_id;
+        if (stream_id.empty()) {
+          ProtocolError("START requires a stream id");
+          continue;
+        }
+        if (!active_stream_id.empty()) {
+          ProtocolError("a stream is already active");
+          continue;
+        }
+        if (led) {
+          led->StartUtterance();
+        }
+        active_stream_id = stream_id;
+        ProtocolOk("START " + stream_id);
+      } else if (command == "PCM") {
+        size_t pcm_bytes = 0;
+        header >> pcm_bytes;
+        if (pcm_bytes == 0) {
+          ProtocolError("PCM length must be positive");
+          continue;
+        }
+        std::vector<uint8_t> pcm;
+        if (!ReadExact(std::cin, pcm, pcm_bytes)) {
+          ProtocolError("unexpected EOF while reading PCM payload");
+          break;
+        }
+        if (pcm_bytes % 2 != 0) {
+          ProtocolError("PCM length must be a multiple of 2");
+          continue;
+        }
+        if (active_stream_id.empty()) {
+          ProtocolError("PCM received without an active stream");
+          continue;
+        }
+        int32_t ret = 0;
+        {
+          std::lock_guard<std::mutex> lock(client_mutex);
+          ret = client.PlayStream(kAppName, active_stream_id, pcm);
+        }
+        if (ret != 0) {
+          ProtocolError("PlayStream failed: " + std::to_string(ret));
+          continue;
+        }
+        if (led) {
+          led->EnqueuePcm(pcm);
+        }
+        ProtocolOk("PCM " + std::to_string(pcm_bytes));
+      } else if (command == "END") {
+        if (active_stream_id.empty()) {
+          ProtocolError("END received without an active stream");
+          continue;
+        }
+        if (led) {
+          led->WaitUntilIdle();
+        }
+        int32_t ret = 0;
+        {
+          std::lock_guard<std::mutex> lock(client_mutex);
+          ret = client.PlayStop(kAppName);
+        }
+        if (ret != 0) {
+          ProtocolError("PlayStop failed: " + std::to_string(ret));
+          continue;
+        }
+        if (led) {
+          led->FinishUtterance();
+        }
+        active_stream_id.clear();
+        ProtocolOk("END");
+      } else if (command == "STOP") {
+        if (led) {
+          led->Abort();
+        }
+        if (!active_stream_id.empty()) {
+          std::lock_guard<std::mutex> lock(client_mutex);
+          client.PlayStop(kAppName);
+        }
+        active_stream_id.clear();
+        ProtocolOk("STOP");
+      } else if (command == "QUIT") {
+        if (led) {
+          led->Abort();
+        }
+        if (!active_stream_id.empty()) {
+          std::lock_guard<std::mutex> lock(client_mutex);
+          client.PlayStop(kAppName);
+        }
+        active_stream_id.clear();
+        ProtocolOk("QUIT");
+        break;
+      } else {
+        ProtocolError("unsupported command: " + command);
+      }
+    } catch (const std::exception& exc) {
+      ProtocolError(exc.what());
+    }
+  }
+
+  if (!active_stream_id.empty()) {
+    std::lock_guard<std::mutex> lock(client_mutex);
+    client.PlayStop(kAppName);
+  }
+  if (led) {
+    led->Shutdown();
+  }
+  return 0;
+}
+
 void SleepSeconds(double seconds) {
   std::this_thread::sleep_for(
       std::chrono::milliseconds(static_cast<int>(seconds * 1000.0)));
@@ -382,35 +732,42 @@ void SleepSeconds(double seconds) {
 int main(int argc, char** argv) {
   try {
     Args args = ParseArgs(argc, argv);
-    std::cout << "WARNING: about to play audio at volume " << args.volume
-              << ". Please keep people away from the robot speaker."
-              << std::endl;
-    std::cout << "[INFO] interface=" << args.iface << std::endl;
-    std::cout << "[INFO] wav=" << args.wav << std::endl;
+    std::ostream& log = args.stream_stdin ? std::cerr : std::cout;
+    log << "WARNING: about to play audio at volume " << args.volume
+        << ". Please keep people away from the robot speaker."
+        << std::endl;
+    log << "[INFO] interface=" << args.iface << std::endl;
+    log << "[INFO] wav=" << args.wav << std::endl;
     if (!args.tts_text.empty()) {
-      std::cout << "[INFO] tts_text_chars=" << args.tts_text.size()
-                << " tts_speaker_id=" << args.tts_speaker_id << std::endl;
+      log << "[INFO] tts_text_chars=" << args.tts_text.size()
+          << " tts_speaker_id=" << args.tts_speaker_id << std::endl;
     }
 
     unitree::robot::ChannelFactory::Instance()->Init(0, args.iface);
     unitree::robot::g1::AudioClient client;
     client.Init();
     client.SetTimeout(10.0f);
-    std::cout << "[RESULT] AudioClient init=OK" << std::endl;
+    log << "[RESULT] AudioClient init=OK" << std::endl;
 
     uint8_t original_volume = 0;
     int32_t ret = client.GetVolume(original_volume);
-    std::cout << "[RESULT] GetVolume ret=" << ret
-              << " volume=" << static_cast<int>(original_volume) << std::endl;
+    log << "[RESULT] GetVolume ret=" << ret
+        << " volume=" << static_cast<int>(original_volume) << std::endl;
 
     ret = client.SetVolume(static_cast<uint8_t>(args.volume));
-    std::cout << "[RESULT] SetVolume requested=" << args.volume
-              << " ret=" << ret << std::endl;
+    log << "[RESULT] SetVolume requested=" << args.volume
+        << " ret=" << ret << std::endl;
 
     uint8_t current_volume = 0;
     int32_t current_ret = client.GetVolume(current_volume);
-    std::cout << "[RESULT] GetVolumeAfterSet ret=" << current_ret
-              << " volume=" << static_cast<int>(current_volume) << std::endl;
+    log << "[RESULT] GetVolumeAfterSet ret=" << current_ret
+        << " volume=" << static_cast<int>(current_volume) << std::endl;
+
+    if (args.stream_stdin) {
+      log << "[INFO] persistent_pcm_stream=true reactive_led="
+          << args.stream_reactive_led << std::endl;
+      return RunPersistentPcmStream(client, args);
+    }
 
     if (!args.tts_text.empty()) {
       ret = client.TtsMaker(args.tts_text, args.tts_speaker_id);

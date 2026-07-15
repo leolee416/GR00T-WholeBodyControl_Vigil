@@ -28,6 +28,16 @@ AUDIO_CAPABILITIES: JSONDict = {
     "sample_width": 2,
     "speaker_volume": 100,
     "speaker_peak_target": 27800,
+    "streaming": {
+        "protocol": "output.start/binary/output.end",
+        "persistent_runner": True,
+        "chunk_ms": 200,
+        "prebuffer_ms": 400,
+        "send_lead_ms": 20,
+        "queue_seconds": 3.0,
+        "drain_ms": 150,
+        "normalization": "fixed_gain_per_utterance",
+    },
     "speaker_led": {
         "enabled": False,
         "source": "outgoing_pcm_amplitude",

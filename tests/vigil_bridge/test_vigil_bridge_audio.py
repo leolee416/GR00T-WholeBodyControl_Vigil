@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 import struct
 
 from gear_sonic.vigil_bridge.audio import (
     AudioBridgeConfig,
     AudioSessionManager,
     FakeSpeakerClient,
+    SubprocessSpeakerClient,
     normalize_pcm16_peak,
     pcm16_stats,
 )
@@ -148,6 +150,172 @@ def test_audio_output_segment_reports_bad_speaker_runner_without_raising() -> No
 
     assert response["ok"] is False
     assert "directory" in response["error_message"]
+
+
+def test_persistent_output_stream_uses_one_speaker_lifecycle_for_many_chunks() -> None:
+    speaker = FakeSpeakerClient()
+    manager = AudioSessionManager(
+        AudioBridgeConfig(
+            enabled=True,
+            fake_speaker=True,
+            speaker_stream_chunk_ms=20,
+            speaker_stream_prebuffer_ms=40,
+            speaker_stream_send_lead_ms=2,
+            speaker_stream_queue_s=1.0,
+            speaker_stream_drain_ms=0,
+        ),
+        speaker_client=speaker,
+    )
+    chunks = [_pcm([1000] * 320), _pcm([2000] * 320), _pcm([3000] * 320)]
+
+    started = manager.start_output_stream(
+        {"utterance_id": "utt-many", "normalize": False}
+    )
+    accepted = [
+        manager.write_output_stream_pcm(chunk, {"utterance_id": "utt-many"})
+        for chunk in chunks
+    ]
+    ended = manager.end_output_stream({"utterance_id": "utt-many", "timeout_s": 2.0})
+
+    assert started["ok"] is True
+    assert all(result["ok"] for result in accepted)
+    assert ended["ok"] is True
+    assert speaker.stream_start_count == 1
+    assert speaker.stream_end_count == 1
+    assert speaker.stream_write_count == 3
+    assert bytes(speaker.stream_pcm) == b"".join(chunks)
+    assert ended["telemetry"]["underrun_count"] == 0
+
+
+def test_persistent_output_stream_reports_backpressure_without_dropping_pcm() -> None:
+    speaker = FakeSpeakerClient()
+    manager = AudioSessionManager(
+        AudioBridgeConfig(
+            enabled=True,
+            fake_speaker=True,
+            speaker_stream_chunk_ms=20,
+            speaker_stream_prebuffer_ms=20,
+            speaker_stream_send_lead_ms=0,
+            speaker_stream_queue_s=0.02,
+            speaker_stream_drain_ms=0,
+        ),
+        speaker_client=speaker,
+    )
+
+    assert manager.start_output_stream({"utterance_id": "utt-full"})["ok"] is True
+    too_large = manager.write_output_stream_pcm(
+        _pcm([1000] * 641),
+        {"utterance_id": "utt-full"},
+    )
+    stopped = manager.stop_output()
+
+    assert too_large["ok"] is False
+    assert too_large["backpressure"] is True
+    assert "queue is full" in too_large["error_message"]
+    assert stopped["ok"] is True
+    assert speaker.stop_count >= 1
+
+
+def test_persistent_output_stream_recovers_after_playstream_failure() -> None:
+    class FailFirstWriteSpeaker(FakeSpeakerClient):
+        fail_next_write = True
+
+        def write_stream_pcm(self, pcm: bytes, telemetry: dict) -> dict:
+            if self.fail_next_write:
+                self.fail_next_write = False
+                return {"ok": False, "error_message": "injected PlayStream failure"}
+            return super().write_stream_pcm(pcm, telemetry)
+
+    speaker = FailFirstWriteSpeaker()
+    manager = AudioSessionManager(
+        AudioBridgeConfig(
+            enabled=True,
+            fake_speaker=True,
+            speaker_stream_chunk_ms=20,
+            speaker_stream_prebuffer_ms=20,
+            speaker_stream_send_lead_ms=0,
+            speaker_stream_queue_s=1.0,
+            speaker_stream_drain_ms=0,
+        ),
+        speaker_client=speaker,
+    )
+    pcm = _pcm([1000] * 320)
+
+    assert manager.start_output_stream({"utterance_id": "utt-fails"})["ok"] is True
+    assert manager.write_output_stream_pcm(pcm)["ok"] is True
+    failed = manager.end_output_stream({"timeout_s": 2.0})
+
+    assert failed["ok"] is False
+    assert failed["telemetry"]["state"] == "failed"
+    assert failed["speaker_result"]["recovery"]["ok"] is True
+    assert speaker.stop_count == 1
+
+    assert manager.start_output_stream({"utterance_id": "utt-recovers"})["ok"] is True
+    assert manager.write_output_stream_pcm(pcm)["ok"] is True
+    recovered = manager.end_output_stream({"timeout_s": 2.0})
+
+    assert recovered["ok"] is True
+    assert speaker.stream_end_count == 1
+
+
+def test_persistent_subprocess_speaker_reuses_one_runner(tmp_path: Path) -> None:
+    runner = tmp_path / "fake_speaker_runner.py"
+    runner.write_text(
+        """#!/usr/bin/env python3
+import sys
+
+stdin = sys.stdin.buffer
+print("OK READY", flush=True)
+while True:
+    raw = stdin.readline()
+    if not raw:
+        break
+    line = raw.decode("utf-8").strip()
+    if line.startswith("PCM "):
+        size = int(line.split()[1])
+        payload = stdin.read(size)
+        if len(payload) != size:
+            print("ERR short PCM", flush=True)
+            break
+        print(f"OK PCM {size}", flush=True)
+    elif line.startswith("START "):
+        print(f"OK {line}", flush=True)
+    elif line == "END":
+        print("OK END", flush=True)
+    elif line == "STOP":
+        print("OK STOP", flush=True)
+    elif line == "QUIT":
+        print("OK QUIT", flush=True)
+        break
+    else:
+        print(f"ERR unsupported {line}", flush=True)
+""",
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+    config = AudioBridgeConfig(
+        enabled=True,
+        speaker_runner=str(runner),
+        speaker_volume=80,
+    )
+    speaker = SubprocessSpeakerClient(config)
+
+    started = speaker.start_stream("utt-ipc", {})
+    pid = speaker.health()["runner_pid"]
+    written = speaker.write_stream_pcm(_pcm([100, -100] * 320), {})
+    ended = speaker.end_stream({})
+    started_again = speaker.start_stream("utt-ipc-2", {})
+    same_pid = speaker.health()["runner_pid"]
+    stopped = speaker.stop()
+    speaker.close()
+
+    assert started["ok"] is True
+    assert written["ok"] is True
+    assert ended["ok"] is True
+    assert started_again["ok"] is True
+    assert pid == same_pid
+    assert stopped["ok"] is True
+    assert speaker.health()["runner_alive"] is False
 
 
 def test_audio_tts_maps_languages_to_fake_speaker_ids() -> None:

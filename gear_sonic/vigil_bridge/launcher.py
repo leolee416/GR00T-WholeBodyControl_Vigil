@@ -163,6 +163,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Drive the G1 speaker LED from outgoing PCM amplitude using the LED-aware runner.",
     )
     audio_group.add_argument(
+        "--audio-speaker-stream-chunk-ms",
+        type=int,
+        default=200,
+        help="Persistent PlayStream chunk duration. Tune on hardware; default 200 ms.",
+    )
+    audio_group.add_argument(
+        "--audio-speaker-stream-prebuffer-ms",
+        type=int,
+        default=400,
+        help="Outgoing PCM buffered before persistent playback starts.",
+    )
+    audio_group.add_argument(
+        "--audio-speaker-stream-send-lead-ms",
+        type=int,
+        default=20,
+        help="Send each PlayStream block slightly before the prior block drains.",
+    )
+    audio_group.add_argument(
+        "--audio-speaker-stream-queue-s",
+        type=float,
+        default=3.0,
+        help="Maximum queued outgoing PCM before bridge backpressure.",
+    )
+    audio_group.add_argument(
+        "--audio-speaker-stream-drain-ms",
+        type=int,
+        default=150,
+        help="Final hardware drain margin before PlayStop.",
+    )
+    audio_group.add_argument(
         "--audio-fake-speaker",
         action="store_true",
         help="Use a fake speaker client for dry bridge tests instead of hardware playback.",
@@ -546,6 +576,20 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         raise SystemExit("--audio-speaker-peak-target must be in 1..32767")
     if args.audio_speaker_reactive_led and not args.audio_speaker_runner:
         raise SystemExit("--audio-speaker-reactive-led requires --audio-speaker-runner")
+    if args.audio_speaker_stream_chunk_ms <= 0:
+        raise SystemExit("--audio-speaker-stream-chunk-ms must be positive")
+    if args.audio_speaker_stream_prebuffer_ms < args.audio_speaker_stream_chunk_ms:
+        raise SystemExit(
+            "--audio-speaker-stream-prebuffer-ms must be >= --audio-speaker-stream-chunk-ms"
+        )
+    if not 0 <= args.audio_speaker_stream_send_lead_ms < args.audio_speaker_stream_chunk_ms:
+        raise SystemExit(
+            "--audio-speaker-stream-send-lead-ms must be in [0, stream-chunk-ms)"
+        )
+    if args.audio_speaker_stream_queue_s <= 0.0:
+        raise SystemExit("--audio-speaker-stream-queue-s must be positive")
+    if args.audio_speaker_stream_drain_ms < 0:
+        raise SystemExit("--audio-speaker-stream-drain-ms must be >= 0")
     if args.audio_ws_port <= 0:
         raise SystemExit("--audio-ws-port must be positive")
     if args.audio_ws_host and not args.audio_ws:
@@ -568,6 +612,16 @@ def _audio_bridge_args(args: argparse.Namespace) -> list[str]:
         str(args.audio_speaker_volume),
         "--audio-speaker-peak-target",
         str(args.audio_speaker_peak_target),
+        "--audio-speaker-stream-chunk-ms",
+        str(args.audio_speaker_stream_chunk_ms),
+        "--audio-speaker-stream-prebuffer-ms",
+        str(args.audio_speaker_stream_prebuffer_ms),
+        "--audio-speaker-stream-send-lead-ms",
+        str(args.audio_speaker_stream_send_lead_ms),
+        "--audio-speaker-stream-queue-s",
+        str(args.audio_speaker_stream_queue_s),
+        "--audio-speaker-stream-drain-ms",
+        str(args.audio_speaker_stream_drain_ms),
     ]
     if args.audio_advertise_always:
         bridge_args.append("--audio-advertise-always")

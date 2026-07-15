@@ -80,6 +80,43 @@ async def _exercise_full_duplex(url: str, manager: AudioSessionManager, speaker:
         assert stop_result["payload"]["ok"] is True
 
 
+async def _exercise_persistent_output_stream(url: str, speaker: FakeSpeakerClient) -> None:
+    websocket = await _connect_retry(url)
+    async with websocket:
+        started = json.loads(await websocket.recv())
+        assert started["type"] == "session.started"
+
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "output.start",
+                    "utterance_id": "utt-ws",
+                    "normalize": False,
+                }
+            )
+        )
+        start_result = await _recv_until(websocket, "output.start.result")
+        assert start_result["payload"]["ok"] is True
+
+        chunks = [_pcm([value] * 320) for value in (1000, 2000, 3000)]
+        for chunk in chunks:
+            await websocket.send(chunk)
+            accepted = await _recv_until(websocket, "output.result")
+            assert accepted["payload"]["ok"] is True
+
+        await websocket.send(json.dumps({"type": "output.end", "utterance_id": "utt-ws"}))
+        end_result = await _recv_until(websocket, "output.end.result")
+        assert end_result["payload"]["ok"] is True
+        assert speaker.stream_start_count == 1
+        assert speaker.stream_write_count == 3
+        assert speaker.stream_end_count == 1
+        assert bytes(speaker.stream_pcm) == b"".join(chunks)
+
+        await websocket.send(json.dumps({"type": "session.stop"}))
+        stop_result = await _recv_until(websocket, "session.stop.result")
+        assert stop_result["payload"]["ok"] is True
+
+
 def test_audio_websocket_full_duplex_with_fake_speaker() -> None:
     port = _free_tcp_port()
     speaker = FakeSpeakerClient()
@@ -96,5 +133,33 @@ def test_audio_websocket_full_duplex_with_fake_speaker() -> None:
     server.start()
     try:
         asyncio.run(_exercise_full_duplex(f"ws://127.0.0.1:{port}/audio/ws", manager, speaker))
+    finally:
+        server.stop()
+
+
+def test_audio_websocket_persistent_output_stream() -> None:
+    port = _free_tcp_port()
+    speaker = FakeSpeakerClient()
+    manager = AudioSessionManager(
+        AudioBridgeConfig(
+            enabled=True,
+            fake_speaker=True,
+            speaker_stream_chunk_ms=20,
+            speaker_stream_prebuffer_ms=40,
+            speaker_stream_send_lead_ms=2,
+            speaker_stream_queue_s=1.0,
+            speaker_stream_drain_ms=0,
+        ),
+        speaker_client=speaker,
+    )
+    server = AudioWebSocketServer(
+        manager=manager,
+        host="127.0.0.1",
+        port=port,
+        config=AudioWebSocketServerConfig(start_input_on_connect=False),
+    )
+    server.start()
+    try:
+        asyncio.run(_exercise_persistent_output_stream(f"ws://127.0.0.1:{port}/audio/ws", speaker))
     finally:
         server.stop()

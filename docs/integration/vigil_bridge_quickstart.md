@@ -222,6 +222,11 @@ python3 -m gear_sonic.vigil_bridge.audio_ws_client \
   --send-tone
 ```
 
+该客户端默认发送 `output.start -> 40 ms binary PCM frames -> output.end`，用于
+验证 persistent runner；只有显式加 `--legacy-one-shot` 才会走旧的单段兼容路径。
+连续语音期间检查 `/audio/health`，应看到稳定的 `speaker.runner_pid` 且
+`output_stream.telemetry.underrun_count=0`。
+
 小幅前进，仅限 @lizj18 在场时使用：
 
 ```bash
