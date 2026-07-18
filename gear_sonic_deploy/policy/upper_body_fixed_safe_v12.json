@@ -1,0 +1,56 @@
+{
+  "name": "upper_body_fixed_safe_v12",
+  "base_policy": {
+    "checkpoint_prefix": "policy/sit_chair_model",
+    "source_checkpoint_sha256": "0e086f74ac32fdb0ec5f3a3b5830571a66b1fee8c571b3c82c8271f8cbe7a9a2",
+    "motion_id": 4,
+    "note": "v12 is a runtime PD-target protocol on the unchanged v7 policy"
+  },
+  "application_layer": {
+    "where": "PD position-target layer at 50 Hz after policy inference",
+    "policy_observations": "unchanged",
+    "reference_motion": "unchanged"
+  },
+  "reset_preposition": {
+    "required": true,
+    "motion_clock": "frozen at streamed frame 0 until convergence",
+    "arm_joint_velocities": 0.0
+  },
+  "fixed_pose_targets_rad": {
+    "left_shoulder_pitch_joint": 0.2,
+    "left_shoulder_roll_joint": 0.65,
+    "left_shoulder_yaw_joint": 0.0,
+    "left_elbow_joint": 0.9,
+    "left_wrist_roll_joint": 0.0,
+    "left_wrist_pitch_joint": 0.0,
+    "left_wrist_yaw_joint": 0.0,
+    "right_shoulder_pitch_joint": 0.2,
+    "right_shoulder_roll_joint": -0.65,
+    "right_shoulder_yaw_joint": 0.0,
+    "right_elbow_joint": 0.9,
+    "right_wrist_roll_joint": 0.0,
+    "right_wrist_pitch_joint": 0.0,
+    "right_wrist_yaw_joint": 0.0
+  },
+  "presit_tuck": {
+    "targets_rad": {
+      "right_shoulder_roll_joint": -0.85,
+      "right_shoulder_pitch_joint": 0.45
+    },
+    "window_s_from_motion_start": [
+      4.3,
+      5.0
+    ],
+    "blend_ramp_s": 0.2,
+    "blend_shape": "trapezoid"
+  },
+  "source_asset_sha256": {
+    "config": "fc5911df5e0c334553f2515541f9865efe5d3990fc29e025e7e67450a2271de1",
+    "training_collision_urdf": "dbc8471004e9b0b85c27a4ebc1f0d90a727c1cf7ca9ef507b805596f2004d64b"
+  },
+  "warnings": [
+    "Do not rewrite the reference motion arm channels.",
+    "Do not alter the fixed pose or tuck values without a full closed-loop rerun.",
+    "The released source-model validation retains only pelvis-to-hip adjacent-link primitive overlap."
+  ]
+}

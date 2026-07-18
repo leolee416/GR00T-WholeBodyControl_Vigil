@@ -318,12 +318,16 @@ class RealRuntimeClient:
             raise ValueError("reference motion payload requires frames")
         self._switch_to_streamed_motion(publisher)
         publisher.send_reference_motion(frames)
+        body_part_indexes = frames.get("body_part_indexes")
         return {
             "motion": "sonic_reference_motion",
             "sonic_input": "reference_motion",
             "motion_name": str(payload.get("motion_name", "")),
             "duration_s": float(payload.get("duration_s", 0.0)),
             "frame_count": len(frames.get("joint_pos", [])) if isinstance(frames.get("joint_pos"), list) else 0,
+            "encode_mode": int(frames.get("encode_mode", 0)),
+            "motion_id": int(frames.get("motion_id", -1)),
+            "body_count": len(body_part_indexes) if isinstance(body_part_indexes, list) else 1,
         }
 
     def _switch_to_streamed_motion(self, publisher: PackedPublisher) -> None:

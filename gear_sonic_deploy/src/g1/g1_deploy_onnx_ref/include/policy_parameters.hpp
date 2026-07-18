@@ -33,6 +33,7 @@
 #define POLICY_PARAMETERS_HPP
 
 #include <array>
+#include <vector>
 
 const double ONE_DEGREE = 0.0174533;  ///< One degree in radians.
 
@@ -102,6 +103,56 @@ const std::array<int, 29> isaaclab_to_mujoco = {0,  3,  6,  9,  13, 17, 1,  4,  
 // Joint mapping arrays  (isaaclab order in mujoco index)
 const std::array<int, 29> mujoco_to_isaaclab = {0,  6,  12, 1,  7,  13, 2,  8,  14, 3,  9,  15, 22, 4, 10,
                                                 16, 23, 5,  11, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28};
+
+// Mechanical position limits in MuJoCo / hardware order. Chair mode clips
+// targets slightly inside these limits to absorb closed-loop tracking
+// overshoot during seat touchdown.
+const std::array<double, 29> g1_joint_lower_limits = {
+    -2.5307, -0.5236, -2.7576, -0.087267, -0.87267, -0.2618,
+    -2.5307, -2.9671, -2.7576, -0.087267, -0.87267, -0.2618,
+    -2.618, -0.52, -0.52,
+    -3.0892, -1.5882, -2.618, -1.0472, -1.97222, -1.61443, -1.61443,
+    -3.0892, -2.2515, -2.618, -1.0472, -1.97222, -1.61443, -1.61443,
+};
+const std::array<double, 29> g1_joint_upper_limits = {
+    2.8798, 2.9671, 2.7576, 2.8798, 0.5236, 0.2618,
+    2.8798, 0.5236, 2.7576, 2.8798, 0.5236, 0.2618,
+    2.618, 0.52, 0.52,
+    2.6704, 2.2515, 2.618, 2.0944, 1.97222, 1.61443, 1.61443,
+    2.6704, 1.5882, 2.618, 2.0944, 1.97222, 1.61443, 1.61443,
+};
+// v12 was closed-loop validated with the existing 0.01-rad deployment
+// margin.  Increasing this to 0.03 changes the lower-body trajectory enough
+// to leave the chair policy's narrow balance basin.
+constexpr double chair_joint_target_margin_rad = 0.01;
+constexpr int chair_v12_motion_id = 4;
+
+// Chair v12 is a runtime PD-target protocol layered on top of the unchanged
+// motionconditioned12_v7 policy.  Indices and targets use MuJoCo / hardware
+// order.  Do not write these values into the reference motion or policy
+// observation.
+constexpr std::array<int, 14> chair_v12_arm_motor_indices = {
+    15, 16, 17, 18, 19, 20, 21,
+    22, 23, 24, 25, 26, 27, 28,
+};
+constexpr std::array<double, 14> chair_v12_fixed_arm_targets_rad = {
+    0.2, 0.65, 0.0, 0.9, 0.0, 0.0, 0.0,
+    0.2, -0.65, 0.0, 0.9, 0.0, 0.0, 0.0,
+};
+constexpr int chair_v12_right_shoulder_pitch_motor_index = 22;
+constexpr int chair_v12_right_shoulder_roll_motor_index = 23;
+constexpr double chair_v12_tuck_start_s = 4.3;
+constexpr double chair_v12_tuck_end_s = 5.0;
+constexpr double chair_v12_tuck_ramp_s = 0.2;
+constexpr double chair_v12_tuck_right_shoulder_pitch_rad = 0.45;
+constexpr double chair_v12_tuck_right_shoulder_roll_rad = -0.85;
+
+// Hardware-only preposition transport.  It freezes streamed frame 0 while
+// moving from measured arm state to the released fixed pose, then requires a
+// short convergence dwell before the 10.86-s rollout clock starts.
+constexpr double chair_v12_preposition_transition_s = 1.0;
+constexpr double chair_v12_preposition_tolerance_rad = 0.08;
+constexpr int chair_v12_preposition_settle_cycles = 10;
 
 // Action scaling parameters
 // Computed using: action_scale = 0.25 * effort_limit / stiffness

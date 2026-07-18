@@ -260,29 +260,88 @@ class PackedPublisher:
             raise ValueError("reference motion must contain at least one frame")
         quat_width = len(body_quat[0])
         quat_shape = [count, 4] if quat_width == 4 else [count, quat_width // 4, 4]
+        body_count = quat_width // 4
+
+        body_pos = self._optional_body_pos_matrix(frames, body_count)
+        if body_pos is not None and len(body_pos) != count:
+            raise ValueError("body_pos must match reference motion frame count")
+        body_part_indexes = frames.get("body_part_indexes")
+        if body_pos is not None:
+            if not isinstance(body_part_indexes, list):
+                raise ValueError("body_part_indexes is required when body_pos is provided")
+            body_part_indexes = [int(value) for value in body_part_indexes]
+            if len(body_part_indexes) != body_count:
+                raise ValueError(
+                    "body_part_indexes must match the number of body_pos/body_quat bodies"
+                )
+        elif body_part_indexes is not None:
+            raise ValueError("body_part_indexes requires body_pos")
+
+        encode_mode = int(frames.get("encode_mode", 0))
+        if encode_mode < 0:
+            raise ValueError("encode_mode must be non-negative for streamed reference motion")
+        motion_id_raw = frames.get("motion_id")
+        motion_id = int(motion_id_raw) if motion_id_raw is not None else -1
+        if motion_id < -1:
+            raise ValueError("motion_id must be -1 (unspecified) or non-negative")
 
         fields = [
             {"name": "joint_pos", "dtype": "f32", "shape": [count, 29]},
             {"name": "joint_vel", "dtype": "f32", "shape": [count, 29]},
             {"name": "body_quat_w", "dtype": "f32", "shape": quat_shape},
-            {"name": "frame_index", "dtype": "i64", "shape": [count]},
-            {"name": "catch_up", "dtype": "u8", "shape": [1]},
         ]
+        chunks = [
+            struct.pack("<" + "f" * (count * 29), *[v for row in joint_pos for v in row]),
+            struct.pack("<" + "f" * (count * 29), *[v for row in joint_vel for v in row]),
+            struct.pack("<" + "f" * (count * quat_width), *[v for row in body_quat for v in row]),
+        ]
+        if body_pos is not None:
+            fields.extend(
+                [
+                    {
+                        "name": "body_pos",
+                        "dtype": "f32",
+                        "shape": [count, body_count, 3],
+                    },
+                    {
+                        "name": "body_part_indexes",
+                        "dtype": "i32",
+                        "shape": [body_count],
+                    },
+                ]
+            )
+            chunks.extend(
+                [
+                    struct.pack(
+                        "<" + "f" * (count * body_count * 3),
+                        *[v for row in body_pos for v in row],
+                    ),
+                    struct.pack("<" + "i" * body_count, *body_part_indexes),
+                ]
+            )
+        fields.extend(
+            [
+                {"name": "encode_mode", "dtype": "i32", "shape": [1]},
+                {"name": "motion_id", "dtype": "i32", "shape": [1]},
+                {"name": "frame_index", "dtype": "i64", "shape": [count]},
+                {"name": "catch_up", "dtype": "u8", "shape": [1]},
+            ]
+        )
         frame_index = frames.get("frame_index")
         if frame_index is None:
             frame_index = list(range(count))
         indices = [int(v) for v in frame_index]
         if len(indices) != count:
             raise ValueError("frame_index must match reference motion frame count")
-        data = b"".join(
+        chunks.extend(
             [
-                struct.pack("<" + "f" * (count * 29), *[v for row in joint_pos for v in row]),
-                struct.pack("<" + "f" * (count * 29), *[v for row in joint_vel for v in row]),
-                struct.pack("<" + "f" * (count * quat_width), *[v for row in body_quat for v in row]),
+                struct.pack("<i", encode_mode),
+                struct.pack("<i", motion_id),
                 struct.pack("<" + "q" * count, *indices),
                 struct.pack("B", 1 if catch_up else 0),
             ]
         )
+        data = b"".join(chunks)
         header = {"v": 1, "endian": "le", "count": count, "fields": fields}
         self._send_packed("pose", header, data)
 
@@ -318,6 +377,25 @@ class PackedPublisher:
                 width = len(vals)
             elif len(vals) != width:
                 raise ValueError("frames.body_quat_w rows must have consistent widths")
+            out.append(vals)
+        return out
+
+    @staticmethod
+    def _optional_body_pos_matrix(
+        frames: Mapping[str, Any],
+        body_count: int,
+    ) -> list[list[float]] | None:
+        raw = frames.get("body_pos")
+        if raw is None:
+            return None
+        if not isinstance(raw, list):
+            raise ValueError("frames.body_pos must be a list")
+        width = body_count * 3
+        out: list[list[float]] = []
+        for row in raw:
+            vals = [float(v) for v in row]
+            if len(vals) != width:
+                raise ValueError(f"frames.body_pos rows must have {width} values")
             out.append(vals)
         return out
 

@@ -36,6 +36,12 @@
  * ## Optional Fields (all versions)
  *
  *   - `left_hand_joints`, `right_hand_joints` – 7-DOF Dex3 joint values.
+ *   - `body_pos` (`N x B x 3`) plus `body_part_indexes` (`B`) – full-body
+ *     reference FK used by teleop encoders.
+ *   - `encode_mode` (scalar, default inferred from protocol) – selects the
+ *     local encoder without changing the protocol version.
+ *   - `motion_id` (scalar, default -1) – identifies the streamed action for
+ *     action-specific runtime safety protocols.
  *   - `vr_position` (9 doubles) – enables VR 3-point tracking mode.
  *   - `vr_orientation` (12 doubles) – defaults used if absent.
  *   - `vr_compliance` (3 doubles) – **IGNORED** (compliance is keyboard-controlled).
@@ -646,7 +652,9 @@ private:
         }
         
         // Find expected fields by name (including frame_index for alignment)
-        int joint_pos_idx = -1, joint_vel_idx = -1, body_quat_idx = -1, frame_index_idx = -1, smpl_joints_idx = -1, smpl_pose_idx = -1;
+        int joint_pos_idx = -1, joint_vel_idx = -1, body_quat_idx = -1, body_pos_idx = -1;
+        int body_part_indexes_idx = -1, encode_mode_idx = -1, motion_id_idx = -1;
+        int frame_index_idx = -1, smpl_joints_idx = -1, smpl_pose_idx = -1;
         int left_hand_joints_idx = -1, right_hand_joints_idx = -1, catch_up_idx = -1;
         int token_state_idx = -1;  // Protocol v4: token-only streaming
         int heading_increment_idx = -1;
@@ -659,6 +667,10 @@ private:
             if (f.name == "joint_pos") joint_pos_idx = static_cast<int>(i);
             else if (f.name == "joint_vel") joint_vel_idx = static_cast<int>(i);
             else if (f.name == "body_quat_w" || f.name == "body_quat") body_quat_idx = static_cast<int>(i);
+            else if (f.name == "body_pos" || f.name == "body_pos_w") body_pos_idx = static_cast<int>(i);
+            else if (f.name == "body_part_indexes") body_part_indexes_idx = static_cast<int>(i);
+            else if (f.name == "encode_mode") encode_mode_idx = static_cast<int>(i);
+            else if (f.name == "motion_id") motion_id_idx = static_cast<int>(i);
             else if (f.name == "frame_index" || f.name == "last_smpl_global_frames") frame_index_idx = static_cast<int>(i);
             else if (f.name == "smpl_joints") smpl_joints_idx = static_cast<int>(i);
             else if (f.name == "smpl_pose") smpl_pose_idx = static_cast<int>(i);
@@ -1105,6 +1117,187 @@ private:
         
         if constexpr (DEBUG_LOGGING) {
             std::cout << "[ZMQEndpointInterface] Decoded body quaternions: " << num_quat_bodies << " bodies per frame" << std::endl;
+        }
+
+        // Decode optional full-body FK positions.  Teleop mode requires these
+        // positions and their canonical body IDs so the policy can construct
+        // root-relative wrist/torso targets for the current reference frame.
+        std::vector<std::vector<std::array<double, 3>>> decoded_body_pos;
+        std::vector<int> decoded_body_part_indexes;
+        int num_bodies = 0;
+        if (body_pos_idx >= 0) {
+            if (body_part_indexes_idx < 0) {
+                std::cerr << "[ZMQEndpointInterface] body_pos requires body_part_indexes" << std::endl;
+                return result;
+            }
+            const auto& body_pos_field = buffered_header_.fields[body_pos_idx];
+            const auto& body_pos_buf = buffered_buffers_[body_pos_idx];
+            if (body_pos_field.shape.size() == 3
+                && static_cast<int>(body_pos_field.shape[0]) == num_frames
+                && body_pos_field.shape[2] == 3) {
+                num_bodies = static_cast<int>(body_pos_field.shape[1]);
+            } else if (body_pos_field.shape.size() == 2
+                       && static_cast<int>(body_pos_field.shape[0]) == num_frames
+                       && body_pos_field.shape[1] == 3) {
+                num_bodies = 1;
+            } else {
+                std::cerr << "[ZMQEndpointInterface] Invalid body_pos shape; expected [N,B,3]" << std::endl;
+                return result;
+            }
+            if (num_bodies <= 0 || num_bodies != num_quat_bodies) {
+                std::cerr << "[ZMQEndpointInterface] body_pos/body_quat body-count mismatch" << std::endl;
+                return result;
+            }
+            if (body_pos_field.dtype != "f32" && body_pos_field.dtype != "f64") {
+                std::cerr << "[ZMQEndpointInterface] Unsupported body_pos dtype: "
+                          << body_pos_field.dtype << std::endl;
+                return result;
+            }
+            decoded_body_pos.resize(
+                num_frames,
+                std::vector<std::array<double, 3>>(num_bodies, {0.0, 0.0, 0.0})
+            );
+            for (int frame = 0; frame < num_frames; ++frame) {
+                for (int body = 0; body < num_bodies; ++body) {
+                    for (int xyz = 0; xyz < 3; ++xyz) {
+                        size_t flat_index = static_cast<size_t>(
+                            frame * num_bodies * 3 + body * 3 + xyz
+                        );
+                        if (body_pos_field.dtype == "f32") {
+                            float value;
+                            std::memcpy(
+                                &value,
+                                body_pos_buf.data() + flat_index * sizeof(float),
+                                sizeof(float)
+                            );
+                            if (needs_swap) value = byte_swap(value);
+                            decoded_body_pos[frame][body][xyz] = static_cast<double>(value);
+                        } else {
+                            double value;
+                            std::memcpy(
+                                &value,
+                                body_pos_buf.data() + flat_index * sizeof(double),
+                                sizeof(double)
+                            );
+                            if (needs_swap) value = byte_swap(value);
+                            decoded_body_pos[frame][body][xyz] = value;
+                        }
+                    }
+                }
+            }
+
+            const auto& indexes_field = buffered_header_.fields[body_part_indexes_idx];
+            const auto& indexes_buf = buffered_buffers_[body_part_indexes_idx];
+            size_t index_count = 1;
+            for (size_t dimension : indexes_field.shape) index_count *= dimension;
+            if (static_cast<int>(index_count) != num_bodies
+                || (indexes_field.dtype != "i32" && indexes_field.dtype != "i64")) {
+                std::cerr << "[ZMQEndpointInterface] Invalid body_part_indexes" << std::endl;
+                return result;
+            }
+            decoded_body_part_indexes.resize(num_bodies);
+            for (int body = 0; body < num_bodies; ++body) {
+                if (indexes_field.dtype == "i32") {
+                    int32_t value;
+                    std::memcpy(
+                        &value,
+                        indexes_buf.data() + body * sizeof(int32_t),
+                        sizeof(int32_t)
+                    );
+                    if (needs_swap) value = byte_swap(value);
+                    decoded_body_part_indexes[body] = static_cast<int>(value);
+                } else {
+                    int64_t value;
+                    std::memcpy(
+                        &value,
+                        indexes_buf.data() + body * sizeof(int64_t),
+                        sizeof(int64_t)
+                    );
+                    if (needs_swap) value = byte_swap(value);
+                    if (value < std::numeric_limits<int>::min()
+                        || value > std::numeric_limits<int>::max()) {
+                        std::cerr << "[ZMQEndpointInterface] body_part_indexes value out of range" << std::endl;
+                        return result;
+                    }
+                    decoded_body_part_indexes[body] = static_cast<int>(value);
+                }
+            }
+        } else if (body_part_indexes_idx >= 0) {
+            std::cerr << "[ZMQEndpointInterface] body_part_indexes requires body_pos" << std::endl;
+            return result;
+        }
+
+        int requested_encode_mode =
+            (protocol_version == 2 || protocol_version == 3) ? 2 : 0;
+        if (encode_mode_idx >= 0) {
+            const auto& mode_field = buffered_header_.fields[encode_mode_idx];
+            const auto& mode_buf = buffered_buffers_[encode_mode_idx];
+            size_t mode_count = 1;
+            for (size_t dimension : mode_field.shape) mode_count *= dimension;
+            if (mode_count != 1
+                || (mode_field.dtype != "i32" && mode_field.dtype != "i64")) {
+                std::cerr << "[ZMQEndpointInterface] Invalid encode_mode; expected one integer" << std::endl;
+                return result;
+            }
+            if (mode_field.dtype == "i32") {
+                int32_t value;
+                std::memcpy(&value, mode_buf.data(), sizeof(int32_t));
+                if (needs_swap) value = byte_swap(value);
+                requested_encode_mode = static_cast<int>(value);
+            } else {
+                int64_t value;
+                std::memcpy(&value, mode_buf.data(), sizeof(int64_t));
+                if (needs_swap) value = byte_swap(value);
+                if (value < 0 || value > std::numeric_limits<int>::max()) {
+                    std::cerr << "[ZMQEndpointInterface] encode_mode out of range" << std::endl;
+                    return result;
+                }
+                requested_encode_mode = static_cast<int>(value);
+            }
+            if (requested_encode_mode < 0) {
+                std::cerr << "[ZMQEndpointInterface] encode_mode must be non-negative" << std::endl;
+                return result;
+            }
+        }
+
+        int requested_motion_id = -1;
+        if (motion_id_idx >= 0) {
+            const auto& motion_id_field = buffered_header_.fields[motion_id_idx];
+            const auto& motion_id_buf = buffered_buffers_[motion_id_idx];
+            size_t motion_id_count = 1;
+            for (size_t dimension : motion_id_field.shape) {
+                motion_id_count *= dimension;
+            }
+            if (motion_id_count != 1
+                || (motion_id_field.dtype != "i32"
+                    && motion_id_field.dtype != "i64")) {
+                std::cerr
+                    << "[ZMQEndpointInterface] Invalid motion_id; expected one integer"
+                    << std::endl;
+                return result;
+            }
+            if (motion_id_field.dtype == "i32") {
+                int32_t value;
+                std::memcpy(&value, motion_id_buf.data(), sizeof(int32_t));
+                if (needs_swap) value = byte_swap(value);
+                requested_motion_id = static_cast<int>(value);
+            } else {
+                int64_t value;
+                std::memcpy(&value, motion_id_buf.data(), sizeof(int64_t));
+                if (needs_swap) value = byte_swap(value);
+                if (value < -1 || value > std::numeric_limits<int>::max()) {
+                    std::cerr << "[ZMQEndpointInterface] motion_id out of range"
+                              << std::endl;
+                    return result;
+                }
+                requested_motion_id = static_cast<int>(value);
+            }
+            if (requested_motion_id < -1) {
+                std::cerr
+                    << "[ZMQEndpointInterface] motion_id must be -1 or non-negative"
+                    << std::endl;
+                return result;
+            }
         }
         
         // Decode SMPL joints if present
@@ -1682,13 +1875,18 @@ private:
         incoming_data.joint_pos = std::move(decoded_joint_pos);
         incoming_data.joint_vel = std::move(decoded_joint_vel);
         incoming_data.body_quat = std::move(decoded_body_quat);
+        incoming_data.body_pos = std::move(decoded_body_pos);
+        incoming_data.body_part_indexes = std::move(decoded_body_part_indexes);
         incoming_data.smpl_joints = std::move(decoded_smpl_joints);
         incoming_data.smpl_pose = std::move(decoded_smpl_pose);
         incoming_data.frame_indices = std::move(frame_indices);
         incoming_data.protocol_version = protocol_version;
         incoming_data.catch_up_enabled = catch_up_enabled;
+        incoming_data.encode_mode = requested_encode_mode;
+        incoming_data.motion_id = requested_motion_id;
         incoming_data.num_frames = num_frames;
         incoming_data.num_joints = num_joints;
+        incoming_data.num_bodies = num_bodies;
         incoming_data.num_quat_bodies = num_quat_bodies;
         incoming_data.num_smpl_joints = num_smpl_joints;
         incoming_data.num_smpl_poses = num_smpl_poses;
@@ -1702,13 +1900,8 @@ private:
             return result;
         }
         
-        // Convert MergeResult to DecodeResult
-        if (active_protocol_version_ == 1) {
-            merge_result.motion->SetEncodeMode(0);  // Protocol 1: joint-based
-        } else if (active_protocol_version_ == 2 || active_protocol_version_ == 3) {
-            // Protocol versions 2 and 3 both use encoder mode 2 (SMPL-based)
-            merge_result.motion->SetEncodeMode(2);
-        }
+        // Convert MergeResult to DecodeResult.  The merger has already applied
+        // the explicit encode_mode, or the protocol-derived legacy default.
         result.motion = merge_result.motion;
         result.window_start = merge_result.window_start;
         result.frame_offset_adjustment = merge_result.frame_offset_adjustment;

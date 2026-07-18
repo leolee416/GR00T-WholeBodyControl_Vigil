@@ -69,6 +69,12 @@ def _build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--input-type", default="zmq_manager", help="deploy input type.")
     start_parser.add_argument("--output-type", default="zmq", help="deploy output type.")
     start_parser.add_argument("--zmq-host", default="127.0.0.1", help="deploy ZMQ command host.")
+    start_parser.add_argument(
+        "--checkpoint",
+        help="Deploy checkpoint prefix; resolves to *_encoder.onnx and *_decoder.onnx.",
+    )
+    start_parser.add_argument("--obs-config", help="Deploy observation-config YAML path.")
+    start_parser.add_argument("--motion-data", help="Deploy reference-motion directory.")
     start_parser.add_argument("--bridge-host", default="0.0.0.0", help="HTTP bridge bind host.")
     start_parser.add_argument("--bridge-port", type=int, default=8765, help="HTTP bridge bind port.")
     start_parser.add_argument("--command-bind-host", default="127.0.0.1", help="Bridge ZMQ command PUB bind host.")
@@ -399,18 +405,24 @@ def _container_script(args: argparse.Namespace, log_path: Path) -> str:
 
 
 def _policy_script(args: argparse.Namespace, log_path: Path) -> str:
-    deploy_cmd = " ".join(
-        [
-            "./deploy.sh",
-            shlex.quote(args.robot_interface),
-            "--input-type",
-            shlex.quote(args.input_type),
-            "--output-type",
-            shlex.quote(args.output_type),
-            "--zmq-host",
-            shlex.quote(args.zmq_host),
-        ]
-    )
+    deploy_args = [
+        "./deploy.sh",
+        shlex.quote(args.robot_interface),
+        "--input-type",
+        shlex.quote(args.input_type),
+        "--output-type",
+        shlex.quote(args.output_type),
+        "--zmq-host",
+        shlex.quote(args.zmq_host),
+    ]
+    for option, value in (
+        ("--checkpoint", args.checkpoint),
+        ("--obs-config", args.obs_config),
+        ("--motion-data", args.motion_data),
+    ):
+        if value:
+            deploy_args.extend([option, shlex.quote(value)])
+    deploy_cmd = " ".join(deploy_args)
     container_command = f"cd /workspace/g1_deploy && source scripts/setup_env.sh && printf '\\n' | {deploy_cmd}"
     return f"""\
         #!/usr/bin/env bash

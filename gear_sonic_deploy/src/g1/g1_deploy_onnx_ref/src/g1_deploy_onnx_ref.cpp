@@ -305,6 +305,13 @@ class G1Deploy {
     std::array<double, 7> last_right_hand_action;
     std::array<double, G1_NUM_MOTOR> pause_start_angles_{};
     bool pause_start_captured_ = false;
+
+    enum class ChairV12Phase { IDLE, PREPOSITION, ROLLOUT };
+    ChairV12Phase chair_v12_phase_ = ChairV12Phase::IDLE;
+    std::array<double, 14> chair_v12_preposition_start_rad_{};
+    double chair_v12_preposition_elapsed_s_ = 0.0;
+    int chair_v12_preposition_settle_count_ = 0;
+    int chair_v12_last_frame_ = -1;
     
     // =========================================================================
     // Logging / recording streams
@@ -3231,7 +3238,9 @@ class G1Deploy {
      * then maps the action output (IsaacLab order) to a MotorCommand
      * (hardware order) using `g1_action_scale` and `default_angles`.
      */
-    bool CreatePolicyCommand() {
+    bool CreatePolicyCommand(
+        const std::shared_ptr<const MotionSequence>& motion,
+        int motion_frame) {
       // Convert double observation to float and populate policy's internal input buffer
       auto& obs_buffer_float = policy_engine_->GetInputBuffer();
       for (size_t i = 0; i < obs_buffer_.size(); i++) { 
@@ -3249,14 +3258,148 @@ class G1Deploy {
       float* floatarr = action_buffer.data();
       
       MotorCommand motor_command_tmp;
+      const bool chair_mode =
+          motion != nullptr &&
+          motion->GetEncodeMode() == 1 &&
+          motion->GetMotionId() == chair_v12_motion_id;
+      const bool chair_v12_active =
+          chair_mode && motion->name == "streamed";
+      const auto low_state = used_low_state_data_.data;
+
+      if (!chair_v12_active) {
+        chair_v12_phase_ = ChairV12Phase::IDLE;
+        chair_v12_preposition_elapsed_s_ = 0.0;
+        chair_v12_preposition_settle_count_ = 0;
+        chair_v12_last_frame_ = -1;
+      } else if (
+          chair_v12_phase_ == ChairV12Phase::IDLE ||
+          (chair_v12_phase_ == ChairV12Phase::ROLLOUT &&
+           motion_frame < chair_v12_last_frame_)) {
+        if (!low_state) {
+          std::cerr
+              << "✗ Error: chair v12 cannot capture arm preposition without LowState"
+              << std::endl;
+          return false;
+        }
+        const auto motor_state = low_state->motor_state();
+        for (size_t arm_slot = 0;
+             arm_slot < chair_v12_arm_motor_indices.size();
+             ++arm_slot) {
+          const int motor_index = chair_v12_arm_motor_indices[arm_slot];
+          chair_v12_preposition_start_rad_[arm_slot] =
+              motor_state[motor_index].q();
+        }
+        chair_v12_phase_ = ChairV12Phase::PREPOSITION;
+        chair_v12_preposition_elapsed_s_ = 0.0;
+        chair_v12_preposition_settle_count_ = 0;
+        std::cout
+            << "[Chair v12] Holding streamed frame 0 while pre-positioning arms"
+            << std::endl;
+      }
+      chair_v12_last_frame_ = motion_frame;
+
+      double chair_v12_tuck_weight = 0.0;
+      if (chair_v12_phase_ == ChairV12Phase::ROLLOUT) {
+        const double motion_time_s =
+            static_cast<double>(motion_frame) * control_dt_;
+        chair_v12_tuck_weight = std::clamp(
+            std::min(
+                (motion_time_s - chair_v12_tuck_start_s) /
+                    chair_v12_tuck_ramp_s,
+                (chair_v12_tuck_end_s - motion_time_s) /
+                    chair_v12_tuck_ramp_s),
+            0.0,
+            1.0);
+      }
+
+      double chair_v12_preposition_alpha = 1.0;
+      if (chair_v12_phase_ == ChairV12Phase::PREPOSITION) {
+        const double linear_alpha = std::clamp(
+            chair_v12_preposition_elapsed_s_ /
+                chair_v12_preposition_transition_s,
+            0.0,
+            1.0);
+        // Quintic smoothstep: zero velocity and acceleration at both ends.
+        chair_v12_preposition_alpha =
+            linear_alpha * linear_alpha * linear_alpha *
+            (10.0 + linear_alpha * (-15.0 + 6.0 * linear_alpha));
+      }
+
       for (int i = 0; i < G1_NUM_MOTOR; i++) {
         const double action_value = static_cast<double>(floatarr[isaaclab_to_mujoco[i]]) * g1_action_scale[i];
         last_action[i] = static_cast<double>(floatarr[i]);
-        motor_command_tmp.q_target.at(i) = static_cast<float>(default_angles[i] + action_value);
+        double q_target = default_angles[i] + action_value;
+        if (chair_v12_active && i >= 15) {
+          const size_t arm_slot = static_cast<size_t>(i - 15);
+          const double fixed_target =
+              chair_v12_fixed_arm_targets_rad[arm_slot];
+          if (chair_v12_phase_ == ChairV12Phase::PREPOSITION) {
+            q_target =
+                chair_v12_preposition_start_rad_[arm_slot] +
+                chair_v12_preposition_alpha *
+                    (fixed_target -
+                     chair_v12_preposition_start_rad_[arm_slot]);
+          } else {
+            q_target = fixed_target;
+            if (i == chair_v12_right_shoulder_pitch_motor_index) {
+              q_target +=
+                  chair_v12_tuck_weight *
+                  (chair_v12_tuck_right_shoulder_pitch_rad -
+                   fixed_target);
+            } else if (i == chair_v12_right_shoulder_roll_motor_index) {
+              q_target +=
+                  chair_v12_tuck_weight *
+                  (chair_v12_tuck_right_shoulder_roll_rad -
+                   fixed_target);
+            }
+          }
+        }
+        if (chair_mode) {
+          q_target = std::clamp(
+              q_target,
+              g1_joint_lower_limits[i] + chair_joint_target_margin_rad,
+              g1_joint_upper_limits[i] - chair_joint_target_margin_rad);
+        }
+        motor_command_tmp.q_target.at(i) = static_cast<float>(q_target);
         motor_command_tmp.tau_ff.at(i) = 0.0;
         motor_command_tmp.kp.at(i) = kps[i];
         motor_command_tmp.kd.at(i) = kds[i];
         motor_command_tmp.dq_target.at(i) = 0.0;
+      }
+
+      if (chair_v12_phase_ == ChairV12Phase::PREPOSITION) {
+        chair_v12_preposition_elapsed_s_ += control_dt_;
+        if (
+            chair_v12_preposition_elapsed_s_ >=
+                chair_v12_preposition_transition_s &&
+            low_state) {
+          const auto motor_state = low_state->motor_state();
+          double max_arm_error_rad = 0.0;
+          for (size_t arm_slot = 0;
+               arm_slot < chair_v12_arm_motor_indices.size();
+               ++arm_slot) {
+            const int motor_index = chair_v12_arm_motor_indices[arm_slot];
+            max_arm_error_rad = std::max(
+                max_arm_error_rad,
+                std::abs(
+                    motor_state[motor_index].q() -
+                    chair_v12_fixed_arm_targets_rad[arm_slot]));
+          }
+          if (max_arm_error_rad <= chair_v12_preposition_tolerance_rad) {
+            ++chair_v12_preposition_settle_count_;
+          } else {
+            chair_v12_preposition_settle_count_ = 0;
+          }
+          if (
+              chair_v12_preposition_settle_count_ >=
+              chair_v12_preposition_settle_cycles) {
+            chair_v12_phase_ = ChairV12Phase::ROLLOUT;
+            chair_v12_preposition_settle_count_ = 0;
+            std::cout
+                << "[Chair v12] Arm pre-position converged; starting motion clock"
+                << std::endl;
+          }
+        }
       }
       motor_command_buffer_.SetData(motor_command_tmp);
       return true;
@@ -3280,6 +3423,16 @@ class G1Deploy {
     bool CurrentFrameAdvancement() {
       // get current motion and frame from planner when planner is enabled and initialized
       std::lock_guard<std::mutex> motion_lock(current_motion_mutex_);
+      if (
+          chair_v12_phase_ == ChairV12Phase::PREPOSITION &&
+          current_motion_ != nullptr &&
+          current_motion_->name == "streamed" &&
+          current_motion_->GetEncodeMode() == 1 &&
+          current_motion_->GetMotionId() == chair_v12_motion_id) {
+        // v12 reset protocol: the policy keeps observing true robot state and
+        // the unmodified frame-0 reference while the arm PD targets converge.
+        return true;
+      }
       if (planner_ && planner_->planner_state_.enabled && planner_->planner_state_.initialized) {
         std::lock_guard<std::mutex> planner_lock(planner_->planner_motion_mutex_);
         
@@ -4082,7 +4235,7 @@ class G1Deploy {
 
           auto obs_end_time = std::chrono::steady_clock::now();
 
-          if (!CreatePolicyCommand()) {
+          if (!CreatePolicyCommand(current_motion_copy, current_frame_copy)) {
             std::cout << "✗ Error: Failed to create policy command in the middle of the control loop!" << std::endl;
             std::cout << "Stopping control system." << std::endl;
             operator_state.stop = true;

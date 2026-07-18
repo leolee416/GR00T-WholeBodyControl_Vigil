@@ -101,6 +101,23 @@ def test_audio_disabled_does_not_forward_audio_options() -> None:
     assert launcher._audio_bridge_args(args) == []
 
 
+def test_policy_script_forwards_chair_policy_assets() -> None:
+    args = _parse_start_args(
+        "--checkpoint",
+        "policy/sit_chair/model",
+        "--obs-config",
+        "policy/sit_chair/observation_config.yaml",
+        "--motion-data",
+        "reference/sit_chair",
+    )
+
+    script = launcher._policy_script(args, Path("/tmp/policy.log"))
+
+    assert "--checkpoint policy/sit_chair/model" in script
+    assert "--obs-config policy/sit_chair/observation_config.yaml" in script
+    assert "--motion-data reference/sit_chair" in script
+
+
 def test_reactive_led_requires_speaker_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     args = _parse_start_args("--with-audio", "--audio-speaker-reactive-led")
     deploy_dir = tmp_path / "deploy"

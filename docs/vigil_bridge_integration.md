@@ -232,9 +232,11 @@ The adapter uses:
 - ZMQ `g1_debug` state SUB messages published by deploy when output is enabled
 - optional ZMQ camera frames from the real-robot camera stack
 
-The bridge still does not start deploy, does not start the robot, does not call
-policy inference directly, and does not modify WBC internals. Start and verify
-the real deploy process separately, then start the bridge with `--backend real`.
+The bridge service still does not start deploy, does not start the robot, and
+does not call policy inference directly. The robot-side launcher starts those
+processes separately. The packed pose protocol now optionally carries full-body
+FK and an encoder-mode selector so motion-conditioned policies can consume the
+same dynamic reference features they used during evaluation.
 For robot-side bring-up, the repository also provides `./vigil_bridge start`,
 which is a tmux launcher around Docker, deploy, and the HTTP bridge. That helper
 starts processes; the HTTP bridge service itself remains a runtime adapter.
@@ -249,6 +251,46 @@ Example one-command robot-side setup:
 cd /home/unitree/GR00T-WholeBodyControl_Vigil
 ./vigil_bridge start --max-speed-mps 2 --camera-required --attach
 ```
+
+For a custom motion-conditioned policy, the same launcher forwards policy
+assets to `deploy.sh`:
+
+```bash
+./vigil_bridge start \
+  --checkpoint policy/sit_chair_model \
+  --obs-config policy/observation_config_sit_chair.yaml \
+  --motion-data reference/example \
+  --max-speed-mps 2 \
+  --camera-required \
+  --attach
+```
+
+`--checkpoint` is a prefix and must resolve to matching `_encoder.onnx` and
+`_decoder.onnx` files. Existing wave/high-five streams remain encoder mode 0.
+Chair streams select mode 1 and additionally send `body_pos`,
+`body_part_indexes`, `motion_id=4`, and the dynamic reference root height
+consumed by the chair decoder. `motion_id` is also the downstream guard that
+prevents other mode-1 teleop streams from receiving chair-only PD overrides.
+Missing optional fields keep the legacy protocol-derived behavior (v1 mode 0;
+v2/v3 mode 2, motion identity unspecified).
+
+The deploy output path applies the released `upper_body_fixed_safe_v12`
+runtime protocol on top of the unchanged v7 policy and unchanged chair
+reference:
+
+- streamed encoder-mode-1 frame 0 is held while the 14 arm joints are
+  pre-positioned;
+- after inference, the 14 arm PD position targets are replaced by the fixed
+  v12 pose while legs and waist retain policy output;
+- at motion time 4.3--5.0 s, right shoulder roll/pitch blend to
+  -0.85/0.45 rad with a 0.2 s trapezoid ramp;
+- all chair targets are clipped 0.01 rad inside the G1 mechanical range.
+
+Wave/high-five and other encoder modes keep their existing target behavior.
+The versioned copy of the contract is
+`policy/upper_body_fixed_safe_v12.json`. Do not rewrite the reference arm
+channels; changing any fixed-pose or tuck value requires a full closed-loop
+rerun.
 
 Example manual real setup:
 

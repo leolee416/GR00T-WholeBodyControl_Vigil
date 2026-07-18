@@ -87,6 +87,10 @@ public:
         
         // -- Body quaternions (required for all versions) --
         std::vector<std::vector<std::array<double, 4>>> body_quat;  ///< [frame][body][w,x,y,z].
+
+        // -- Full-body FK (optional, required by teleop reference motions) --
+        std::vector<std::vector<std::array<double, 3>>> body_pos;  ///< [frame][body][x,y,z].
+        std::vector<int> body_part_indexes;  ///< Canonical IDs for body_pos/body_quat storage.
         
         // -- SMPL data (required in v2 & v3, optional in v1) --
         std::vector<std::vector<std::array<double, 3>>> smpl_joints;  ///< [frame][joint][x,y,z].
@@ -96,10 +100,13 @@ public:
         
         int protocol_version = 1;    ///< Protocol version (1, 2, or 3).
         bool catch_up_enabled = true; ///< true → use MAX_GAP_FRAMES; false → allow infinite delay.
+        int encode_mode = 0;         ///< Encoder mode for the merged MotionSequence.
+        int motion_id = -1;          ///< Runtime action identity; -1 means unspecified.
         
         // Derived dimensions (must match the vector sizes above)
         int num_frames = 0;       ///< Number of frames in this chunk.
         int num_joints = 0;       ///< Joints per frame (joint_pos / joint_vel width).
+        int num_bodies = 0;       ///< Number of body positions per frame.
         int num_quat_bodies = 0;  ///< Number of rigid bodies per frame (body_quat width).
         int num_smpl_joints = 0;  ///< SMPL joints per frame.
         int num_smpl_poses = 0;   ///< SMPL pose parameters per frame.
@@ -246,6 +253,25 @@ private:
             std::cerr << "[StreamedMotionMerger] Unsupported protocol version: " << data.protocol_version << std::endl;
             return false;
         }
+
+        if (!data.body_pos.empty()) {
+            if (data.num_bodies <= 0
+                || static_cast<int>(data.body_pos.size()) != data.num_frames
+                || data.num_bodies != data.num_quat_bodies
+                || static_cast<int>(data.body_part_indexes.size()) != data.num_bodies) {
+                std::cerr << "[StreamedMotionMerger] Invalid full-body FK dimensions" << std::endl;
+                return false;
+            }
+            for (const auto& frame : data.body_pos) {
+                if (static_cast<int>(frame.size()) != data.num_bodies) {
+                    std::cerr << "[StreamedMotionMerger] Inconsistent body_pos frame width" << std::endl;
+                    return false;
+                }
+            }
+        } else if (!data.body_part_indexes.empty()) {
+            std::cerr << "[StreamedMotionMerger] body_part_indexes requires body_pos" << std::endl;
+            return false;
+        }
         
         return true;
     }
@@ -350,7 +376,7 @@ private:
         new_motion->name = "streamed";
         
         int joints_to_reserve = data.num_joints;
-        int bodies_to_reserve = 1;
+        int bodies_to_reserve = data.num_bodies > 0 ? data.num_bodies : 1;
         int body_quaternions_to_reserve = data.num_quat_bodies;
         int smpl_joints_to_reserve = data.num_smpl_joints;
         int smpl_poses_to_reserve = data.num_smpl_poses;
@@ -364,8 +390,13 @@ private:
             smpl_poses_to_reserve
         );
         
-        // Initialize body_part_indexes (typically just root for streaming)
-        new_motion->SetBodyPartIndexes({0});
+        new_motion->SetBodyPartIndexes(
+            data.body_part_indexes.empty()
+                ? std::vector<int>{0}
+                : data.body_part_indexes
+        );
+        new_motion->SetEncodeMode(data.encode_mode);
+        new_motion->SetMotionId(data.motion_id);
         
         return new_motion;
     }
@@ -434,6 +465,19 @@ private:
                 }
             }
         }
+
+        // Copy full-body positions when the stream carries FK data.
+        if (data.num_bodies > 0 && old_motion->GetNumBodies() > 0) {
+            int bodies_to_copy = std::min(data.num_bodies, old_motion->GetNumBodies());
+            for (int i = 0; i < copy_count; ++i) {
+                for (int body = 0; body < bodies_to_copy; ++body) {
+                    for (int xyz = 0; xyz < 3; ++xyz) {
+                        new_motion->BodyPositions(copy_dst_idx + i)[body][xyz] =
+                            old_motion->BodyPositions(copy_src_idx + i)[body][xyz];
+                    }
+                }
+            }
+        }
         
         // Copy SMPL data if present
         if (data.num_smpl_joints > 0 && old_motion->GetNumSmplJoints() > 0) {
@@ -486,6 +530,17 @@ private:
                 }
             }
         }
+
+        if (!data.body_pos.empty()) {
+            for (int frame = 0; frame < data.num_frames; ++frame) {
+                for (int body = 0; body < data.num_bodies; ++body) {
+                    for (int xyz = 0; xyz < 3; ++xyz) {
+                        motion->BodyPositions(dst_frame_offset + frame)[body][xyz] =
+                            data.body_pos[frame][body][xyz];
+                    }
+                }
+            }
+        }
         
         // Copy SMPL joints if present
         if (!data.smpl_joints.empty()) {
@@ -514,4 +569,3 @@ private:
 };
 
 #endif // STREAMED_MOTION_MERGER_HPP
-

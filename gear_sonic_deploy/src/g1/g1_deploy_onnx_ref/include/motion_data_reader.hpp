@@ -64,6 +64,9 @@ struct MotionSequence {
     ///  -1 = token state needed but encoder not loaded
     ///   0+ = active encoder mode index
     mutable int encode_mode = -2;
+    /// Runtime action identity carried by streamed motion protocol.
+    /// -1 means unspecified; chair clip 004 uses motion_id 4.
+    int motion_id = -1;
 
     using Point = std::array<double, 3>;
     using Quaternion = std::array<double, 4>;
@@ -97,6 +100,8 @@ struct MotionSequence {
     // Encode mode accessors (const methods that modify mutable encode_mode)
     int GetEncodeMode() const { return encode_mode; }
     void SetEncodeMode(int mode) const { encode_mode = mode; }
+    int GetMotionId() const { return motion_id; }
+    void SetMotionId(int id) { motion_id = id; }
     
     // Set body part indexes (used by ZMQ interface for streamed motions)
     void SetBodyPartIndexes(const std::vector<int>& indexes) { body_part_indexes = indexes; }
