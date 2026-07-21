@@ -62,6 +62,12 @@ class BridgeRequestRouter:
                 },
             }
         if route == "health":
+            executor = self.service.executor
+            get_health = getattr(executor, "get_health", None)
+            if callable(get_health):
+                health = get_health()
+                if isinstance(health, dict):
+                    return health
             return {
                 "ok": True,
                 "error_message": None,

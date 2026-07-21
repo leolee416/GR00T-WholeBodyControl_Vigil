@@ -118,6 +118,14 @@ def test_policy_script_forwards_chair_policy_assets() -> None:
     assert "--motion-data reference/sit_chair" in script
 
 
+def test_policy_script_forwards_explicit_chair_gate_override() -> None:
+    args = _parse_start_args("--disable-chair-v12-preposition-gate")
+
+    script = launcher._policy_script(args, Path("/tmp/policy.log"))
+
+    assert "env CHAIR_V12_DISABLE_PREPOSITION_GATE=1 ./deploy.sh" in script
+
+
 def test_reactive_led_requires_speaker_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     args = _parse_start_args("--with-audio", "--audio-speaker-reactive-led")
     deploy_dir = tmp_path / "deploy"

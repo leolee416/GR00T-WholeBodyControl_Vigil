@@ -114,6 +114,14 @@ def _build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--no-real-motion", action="store_true", help="Do not pass --enable-real-motion.")
     start_parser.add_argument("--no-auto-start-control", action="store_true", help="Do not pass --auto-start-control.")
     start_parser.add_argument(
+        "--disable-chair-v12-preposition-gate",
+        action="store_true",
+        help=(
+            "Disable only the chair-v12 arm-convergence gate before rollout. "
+            "Leaves the fixed-arm targets and all joint limits unchanged."
+        ),
+    )
+    start_parser.add_argument(
         "--no-reset-after-start",
         action="store_true",
         help="Do not call /reset_episode after the bridge HTTP port is up.",
@@ -415,6 +423,8 @@ def _policy_script(args: argparse.Namespace, log_path: Path) -> str:
         "--zmq-host",
         shlex.quote(args.zmq_host),
     ]
+    if args.disable_chair_v12_preposition_gate:
+        deploy_args[0:0] = ["env", "CHAIR_V12_DISABLE_PREPOSITION_GATE=1"]
     for option, value in (
         ("--checkpoint", args.checkpoint),
         ("--obs-config", args.obs_config),

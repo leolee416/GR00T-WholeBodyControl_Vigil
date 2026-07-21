@@ -106,16 +106,19 @@ public:
         inference_engine_.reset();
         return false;
       }
-      if (std::find(input_names.begin(), input_names.end(), std::string("obs_dict")) == input_names.end()) {
-        std::cerr << "✗ Policy input tensor 'obs_dict' not found. Available inputs: ";
+      const auto is_supported_input = [](const std::string& name) {
+        return name == "obs_dict" || name == "actor_obs";
+      };
+      if (!is_supported_input(input_names.front())) {
+        std::cerr << "✗ Policy input tensor must be 'obs_dict' or 'actor_obs'. Available inputs: ";
         for (const auto& n : input_names) std::cerr << n << ' ';
         std::cerr << std::endl;
         inference_engine_.reset();
         return false;
       }
-      input_tensor_name_ = "obs_dict";
+      input_tensor_name_ = input_names.front();
       if (inference_engine_->GetTensorDataType(input_tensor_name_) != DataType::FLOAT) {
-        std::cerr << "✗ Policy input 'obs_dict' must be float32" << std::endl;
+        std::cerr << "✗ Policy input '" << input_tensor_name_ << "' must be float32" << std::endl;
         inference_engine_.reset();
         return false;
       }
@@ -440,4 +443,3 @@ private:
 };
 
 #endif // POLICY_ENGINE_HPP
-

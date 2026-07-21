@@ -50,6 +50,7 @@
  *   --policy-fp16         | Use FP16 for policy TensorRT engine
  */
 #include <cmath>
+#include <cstdlib>
 #include <cuda_runtime_api.h>
 #include <memory>
 #include <mutex>
@@ -3264,6 +3265,13 @@ class G1Deploy {
           motion->GetMotionId() == chair_v12_motion_id;
       const bool chair_v12_active =
           chair_mode && motion->name == "streamed";
+      // This is an explicit operator override, intended only for robots whose
+      // arm pose was independently verified.  It skips the convergence wait;
+      // the fixed v12 arm targets and all joint-limit clamps stay active.
+      static const bool chair_v12_preposition_gate_disabled = []() {
+        const char* value = std::getenv("CHAIR_V12_DISABLE_PREPOSITION_GATE");
+        return value != nullptr && std::strcmp(value, "1") == 0;
+      }();
       const auto low_state = used_low_state_data_.data;
 
       if (!chair_v12_active) {
@@ -3275,26 +3283,37 @@ class G1Deploy {
           chair_v12_phase_ == ChairV12Phase::IDLE ||
           (chair_v12_phase_ == ChairV12Phase::ROLLOUT &&
            motion_frame < chair_v12_last_frame_)) {
-        if (!low_state) {
-          std::cerr
-              << "✗ Error: chair v12 cannot capture arm preposition without LowState"
+        if (chair_v12_preposition_gate_disabled) {
+          chair_v12_phase_ = ChairV12Phase::ROLLOUT;
+          chair_v12_preposition_elapsed_s_ = 0.0;
+          chair_v12_preposition_settle_count_ = 0;
+          std::cout
+              << "[Chair v12] WARNING: arm pre-position convergence gate "
+              << "disabled by CHAIR_V12_DISABLE_PREPOSITION_GATE=1; "
+              << "starting motion clock"
               << std::endl;
-          return false;
+        } else {
+          if (!low_state) {
+            std::cerr
+                << "✗ Error: chair v12 cannot capture arm preposition without LowState"
+                << std::endl;
+            return false;
+          }
+          const auto motor_state = low_state->motor_state();
+          for (size_t arm_slot = 0;
+               arm_slot < chair_v12_arm_motor_indices.size();
+               ++arm_slot) {
+            const int motor_index = chair_v12_arm_motor_indices[arm_slot];
+            chair_v12_preposition_start_rad_[arm_slot] =
+                motor_state[motor_index].q();
+          }
+          chair_v12_phase_ = ChairV12Phase::PREPOSITION;
+          chair_v12_preposition_elapsed_s_ = 0.0;
+          chair_v12_preposition_settle_count_ = 0;
+          std::cout
+              << "[Chair v12] Holding streamed frame 0 while pre-positioning arms"
+              << std::endl;
         }
-        const auto motor_state = low_state->motor_state();
-        for (size_t arm_slot = 0;
-             arm_slot < chair_v12_arm_motor_indices.size();
-             ++arm_slot) {
-          const int motor_index = chair_v12_arm_motor_indices[arm_slot];
-          chair_v12_preposition_start_rad_[arm_slot] =
-              motor_state[motor_index].q();
-        }
-        chair_v12_phase_ = ChairV12Phase::PREPOSITION;
-        chair_v12_preposition_elapsed_s_ = 0.0;
-        chair_v12_preposition_settle_count_ = 0;
-        std::cout
-            << "[Chair v12] Holding streamed frame 0 while pre-positioning arms"
-            << std::endl;
       }
       chair_v12_last_frame_ = motion_frame;
 

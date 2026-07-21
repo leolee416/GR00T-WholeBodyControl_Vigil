@@ -162,6 +162,15 @@ def test_http_pause_and_resume_endpoints(http_server_url: str) -> None:
     assert resume_response["executor_started"] is True
 
 
+def test_http_health_comes_from_executor(http_server_url: str) -> None:
+    status, response = _post_json(http_server_url, "health", {})
+
+    assert status == 200
+    assert response["ok"] is True
+    assert response["telemetry"]["executor"] == "dry_run"
+    assert response["executor_started"] is False
+
+
 def test_http_unknown_endpoint_returns_structured_404(http_server_url: str) -> None:
     with pytest.raises(HTTPError) as exc_info:
         _post_json(http_server_url, "missing", {})

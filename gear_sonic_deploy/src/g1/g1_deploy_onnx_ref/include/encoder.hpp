@@ -111,14 +111,17 @@ public:
         inference_engine_.reset();
         return false;
       }
-      if (std::find(output_names.begin(), output_names.end(), std::string("encoded_tokens")) == output_names.end()) {
-        std::cerr << "✗ Encoder output tensor 'encoded_tokens' not found. Available outputs: ";
+      const auto is_supported_output = [](const std::string& name) {
+        return name == "encoded_tokens" || name == "token_state";
+      };
+      if (output_names.size() != 1 || !is_supported_output(output_names.front())) {
+        std::cerr << "✗ Encoder output tensor must be 'encoded_tokens' or 'token_state'. Available outputs: ";
         for (const auto& n : output_names) std::cerr << n << ' ';
         std::cerr << std::endl;
         inference_engine_.reset();
         return false;
       }
-      output_tensor_name_ = "encoded_tokens";
+      output_tensor_name_ = output_names.front();
 
       std::vector<int64_t> output_dims;
       if (inference_engine_->GetTensorShape(output_tensor_name_, output_dims)) {
@@ -140,16 +143,19 @@ public:
         inference_engine_.reset();
         return false;
       }
-      if (std::find(input_names.begin(), input_names.end(), std::string("obs_dict")) == input_names.end()) {
-        std::cerr << "✗ Encoder input tensor 'obs_dict' not found. Available inputs: ";
+      const auto is_supported_input = [](const std::string& name) {
+        return name == "obs_dict" || name == "actor_obs";
+      };
+      if (!is_supported_input(input_names.front())) {
+        std::cerr << "✗ Encoder input tensor must be 'obs_dict' or 'actor_obs'. Available inputs: ";
         for (const auto& n : input_names) std::cerr << n << ' ';
         std::cerr << std::endl;
         inference_engine_.reset();
         return false;
       }
-      input_tensor_name_ = "obs_dict";
+      input_tensor_name_ = input_names.front();
       if (inference_engine_->GetTensorDataType(input_tensor_name_) != DataType::FLOAT) {
-        std::cerr << "✗ Encoder input 'obs_dict' must be float32" << std::endl;
+        std::cerr << "✗ Encoder input '" << input_tensor_name_ << "' must be float32" << std::endl;
         inference_engine_.reset();
         return false;
       }
