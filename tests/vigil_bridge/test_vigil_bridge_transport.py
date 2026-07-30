@@ -79,6 +79,7 @@ def test_http_handshake_endpoint(http_server_url: str) -> None:
         "navigate.forward",
         "navigate.turn_left",
         "navigate.turn_right",
+        "sonic.sit_chair",
     ]
     assert response["capabilities"]["observation"] == ["rgb", "depth", "robot_state"]
     assert response["bridge"] == {

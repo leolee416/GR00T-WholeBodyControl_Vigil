@@ -85,6 +85,14 @@ def _build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--camera-host", default="localhost", help="Real camera ZMQ host.")
     start_parser.add_argument("--camera-port", type=int, default=5555, help="Real camera ZMQ port.")
     start_parser.add_argument(
+        "--chair-motion-catalog",
+        default=str(
+            REPO_ROOT
+            / "gear_sonic/vigil_bridge/data/facee_chair_13s/manifest.json"
+        ),
+        help="Exact-distance FaceE chair reference manifest.",
+    )
+    start_parser.add_argument(
         "--camera-service",
         default=DEFAULT_CAMERA_SERVICE,
         help="Systemd camera service to start for this Vigil launcher session.",
@@ -426,6 +434,8 @@ def _bridge_script(args: argparse.Namespace, policy_log: Path, bridge_log: Path)
         args.camera_host,
         "--camera-port",
         str(args.camera_port),
+        "--chair-motion-catalog",
+        args.chair_motion_catalog,
         "--verbose",
     ]
     if args.disable_move_model:
@@ -521,6 +531,10 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         raise SystemExit("--pause-settle-time must be >= 0")
     if args.camera_port <= 0:
         raise SystemExit("--camera-port must be positive")
+    if not Path(args.chair_motion_catalog).expanduser().is_file():
+        raise SystemExit(
+            f"chair motion catalog not found: {args.chair_motion_catalog}"
+        )
     if not args.audio_enabled and (
         args.audio_advertise_always
         or args.audio_mic_interface_ip

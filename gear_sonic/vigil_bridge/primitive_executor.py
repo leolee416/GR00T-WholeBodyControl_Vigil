@@ -20,6 +20,7 @@ class DryRunPrimitiveExecutor:
     started: bool = False
     _command_index: int = 0
     _last_telemetry: JSONDict = field(default_factory=dict)
+    chair_motion_catalog: Any | None = None
 
     def start(self) -> RuntimeHealth:
         self.started = True
@@ -128,6 +129,22 @@ class DryRunPrimitiveExecutor:
                     rate_deg_s=self._safety_value(safety_args, "max_rate_deg_s", "rate_deg_s"),
                     timeout_s=self._safety_value(safety_args, "timeout_s"),
                 )
+            if skill == "sonic.sit_chair":
+                if self.chair_motion_catalog is None:
+                    raise ValueError("chair motion catalog is not configured")
+                if "chair_distance_m" not in args:
+                    raise ValueError("chair_distance_m is required")
+                motion = self.chair_motion_catalog.load(args["chair_distance_m"])
+                return self.play_sonic_reference_motion(
+                    {
+                        "chair_distance_m": motion.requested_distance_m,
+                        "reference_distance_m": motion.reference_distance_m,
+                        "motion_name": motion.motion_name,
+                        "tag": motion.tag,
+                        "duration_s": motion.duration_s,
+                        "frames": motion.frames,
+                    }
+                )
             if skill == "report":
                 return self._success(
                     executed_arguments={"primitive": "report", "motion": "none"},
@@ -139,6 +156,31 @@ class DryRunPrimitiveExecutor:
         return self._failure(
             f"unsupported skill_name: {skill_name}",
             {"skill_name": str(skill_name or "")},
+        )
+
+    def play_sonic_reference_motion(
+        self, payload: Mapping[str, Any]
+    ) -> ExecuteActionResponse:
+        frames = payload.get("frames")
+        frame_count = 0
+        if isinstance(frames, Mapping):
+            value = frames.get("joint_pos")
+            frame_count = len(value) if value is not None else 0
+        return self._success(
+            executed_arguments={
+                "primitive": "sonic_reference_motion",
+                "chair_distance_m": float(payload["chair_distance_m"]),
+                "reference_distance_m": float(payload["reference_distance_m"]),
+                "motion_name": str(payload.get("motion_name", "")),
+                "tag": str(payload.get("tag", "")),
+                "duration_s": float(payload.get("duration_s", 0.0)),
+                "frame_count": frame_count,
+            },
+            telemetry={
+                "motion": "sonic_reference_motion",
+                "sonic_input": "reference_motion",
+                "estimated_duration_s": float(payload.get("duration_s", 0.0)),
+            },
         )
 
     def get_health(self, sensor_connected: bool = True) -> RuntimeHealth:

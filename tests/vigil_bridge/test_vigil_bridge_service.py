@@ -15,10 +15,10 @@ def _handshake_request() -> dict:
         "required_capabilities": {
             "actions": [
                 "navigate.backward",
-                "navigate.forward",
-                "navigate.turn_left",
-                "navigate.turn_right",
-            ],
+                    "navigate.forward",
+                    "navigate.turn_left",
+                    "navigate.turn_right",
+                ],
             "observation": ["rgb", "depth", "robot_state"],
             "oracle_source": "none",
         },
@@ -53,6 +53,7 @@ def test_handshake_returns_vigil_protocol_fields() -> None:
                 "navigate.forward",
                 "navigate.turn_left",
                 "navigate.turn_right",
+                "sonic.sit_chair",
             ],
             "observation": ["rgb", "depth", "robot_state"],
             "oracle_source": "none",

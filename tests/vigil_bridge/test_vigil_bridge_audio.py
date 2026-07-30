@@ -42,6 +42,7 @@ def test_legacy_handshake_omits_audio_capability_by_default() -> None:
         "navigate.forward",
         "navigate.turn_left",
         "navigate.turn_right",
+        "sonic.sit_chair",
     ]
     assert response["capabilities"]["observation"] == ["rgb", "depth", "robot_state"]
 

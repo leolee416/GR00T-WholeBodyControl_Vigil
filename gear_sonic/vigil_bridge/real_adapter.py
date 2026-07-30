@@ -37,6 +37,7 @@ from gear_sonic.vigil_bridge.mujoco_adapter import (
     resolve_repo_path,
     wrap_pi,
 )
+from gear_sonic.vigil_bridge.chair_motion_catalog import ChairMotionCatalog
 from gear_sonic.vigil_bridge.primitive_executor import DryRunPrimitiveExecutor
 from gear_sonic.vigil_bridge.protocol import (
     ExecuteActionResponse,
@@ -88,6 +89,7 @@ class RealBridgeConfig:
     motion_enabled: bool = False
     auto_start_control: bool = False
     stop_on_halt: bool = False
+    chair_motion_catalog: str | None = None
     verbose: bool = False
 
 
@@ -225,6 +227,32 @@ class RealRuntimeClient:
         while time.monotonic() < deadline:
             publisher.send_planner(LOCO_IDLE, [0.0, 0.0, 0.0], facing, -1.0, -1.0)
             time.sleep(1.0 / max(self.config.rate_hz, 1.0))
+
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> JSONDict:
+        publisher = self._require_publisher()
+        frames = payload.get("frames")
+        if not isinstance(frames, Mapping):
+            raise ValueError("reference motion payload requires frames")
+        deadline = time.monotonic() + max(0.20, self.config.startup_command_burst_s)
+        period_s = max(self.config.startup_command_period_s, 0.01)
+        while True:
+            publisher.send_command(start=True, stop=False, planner=False)
+            remaining_s = deadline - time.monotonic()
+            if remaining_s <= 0.0:
+                break
+            time.sleep(min(period_s, remaining_s))
+        time.sleep(period_s)
+        publisher.send_reference_motion(frames)
+        return {
+            "motion": "sonic_reference_motion",
+            "sonic_input": "reference_motion",
+            "chair_distance_m": float(payload["chair_distance_m"]),
+            "reference_distance_m": float(payload["reference_distance_m"]),
+            "motion_name": str(payload.get("motion_name", "")),
+            "tag": str(payload.get("tag", "")),
+            "duration_s": float(payload.get("duration_s", 0.0)),
+            "frame_count": len(frames["joint_pos"]),
+        }
 
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> JSONDict:
         publisher = self._require_publisher()
@@ -476,6 +504,10 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
         self.default_rate_deg_s = self.config.default_rotate_rate_deg_s
         if self.runtime is None:
             self.runtime = RealRuntimeClient(self.config)
+        if self.config.chair_motion_catalog:
+            self.chair_motion_catalog = ChairMotionCatalog(
+                self.config.chair_motion_catalog
+            )
         if self.config.use_move_model:
             self._move_model, self._move_model_error = self._load_move_model(self.config.move_model_file)
 
@@ -513,6 +545,47 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
         assert self.runtime is not None
         self.runtime.close()
         self.started = False
+
+    def play_sonic_reference_motion(
+        self, payload: Mapping[str, Any]
+    ) -> ExecuteActionResponse:
+        with self._motion_lock:
+            if not self.config.motion_enabled:
+                return self._real_failure(
+                    "real motion is disabled; start bridge with --enable-real-motion to command hardware",
+                    {"motion": "sonic_reference_motion"},
+                    action_status="rejected",
+                )
+            try:
+                health = self.start()
+                if not health.get("ok", False):
+                    return self._real_failure(
+                        str(health.get("error_message")),
+                        dict(health.get("telemetry", {})),
+                    )
+                assert self.runtime is not None
+                telemetry = self.runtime.play_sonic_reference_motion(payload)
+            except Exception as exc:  # noqa: BLE001 - fail closed for hardware.
+                halt_health = self.halt()
+                return self._real_failure(
+                    str(exc),
+                    {
+                        "motion": "sonic_reference_motion",
+                        "halt_called": True,
+                        "halt_health": halt_health,
+                    },
+                )
+        return self._real_success(
+            executed_arguments={
+                "primitive": "sonic_reference_motion",
+                "chair_distance_m": float(payload["chair_distance_m"]),
+                "reference_distance_m": float(payload["reference_distance_m"]),
+                "motion_name": str(payload.get("motion_name", "")),
+                "tag": str(payload.get("tag", "")),
+                "duration_s": float(payload.get("duration_s", 0.0)),
+            },
+            telemetry=telemetry,
+        )
 
     def move(
         self,

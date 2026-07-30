@@ -12,6 +12,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from gear_sonic.vigil_bridge import VigilBridgeService
+from gear_sonic.vigil_bridge.chair_motion_catalog import (
+    ChairMotionCatalog,
+    DEFAULT_CATALOG,
+)
 from gear_sonic.vigil_bridge.audio import AudioBridgeConfig, AudioSessionManager
 from gear_sonic.vigil_bridge.audio_ws import AudioWebSocketServer
 from gear_sonic.vigil_bridge.mujoco_adapter import (
@@ -108,6 +112,11 @@ def main() -> None:
         action="store_true",
         help="Also send deploy stop=True on /halt. Off by default because it can terminate deploy.",
     )
+    parser.add_argument(
+        "--chair-motion-catalog",
+        default=str(DEFAULT_CATALOG),
+        help="Manifest for exact-distance sonic.sit_chair references.",
+    )
     parser.add_argument("--audio-enabled", action="store_true", help="Enable bridge audio I/O endpoints.")
     parser.add_argument(
         "--audio-advertise-always",
@@ -199,6 +208,7 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
                 camera_port=args.camera_port,
                 auto_start_control=args.auto_start_control,
                 stop_on_halt=args.send_stop_on_halt,
+                chair_motion_catalog=args.chair_motion_catalog,
                 verbose=args.verbose,
             )
         )
@@ -238,7 +248,12 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
             )
         )
         return _attach_audio(args, service)
-    return _attach_audio(args, VigilBridgeService(runtime_mode=_runtime_mode(args)))
+    service = VigilBridgeService(runtime_mode=_runtime_mode(args))
+    assert service.executor is not None
+    service.executor.chair_motion_catalog = ChairMotionCatalog(
+        args.chair_motion_catalog
+    )
+    return _attach_audio(args, service)
 
 
 def _runtime_mode(args: argparse.Namespace) -> str:

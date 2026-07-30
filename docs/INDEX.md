@@ -18,6 +18,8 @@ This index lists the Codex-facing documentation for this repository.
 
 ## Integration
 
+- [FaceE 按椅距选择坐下 reference](integration/facee_chair_distance_motion.md)
+
 - `RUNTIME_BRIDGE_OVERVIEW.md`
   Short runtime bridge overview for external agents/clients and operator lifecycle.
 

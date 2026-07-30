@@ -16,6 +16,7 @@ SUPPORTED_ACTIONS = [
     "navigate.forward",
     "navigate.turn_left",
     "navigate.turn_right",
+    "sonic.sit_chair",
 ]
 SUPPORTED_OBSERVATIONS = ["rgb", "depth", "robot_state"]
 AUDIO_CAPABILITIES: JSONDict = {

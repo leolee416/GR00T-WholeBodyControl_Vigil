@@ -232,6 +232,51 @@ class PackedPublisher:
         )
         self._send_packed("planner", header, data)
 
+    def send_reference_motion(self, frames: Mapping[str, Any]) -> None:
+        """Send one complete protocol-v1 reference chunk to ZMQManager."""
+        import numpy as np
+
+        joint_pos = np.asarray(frames.get("joint_pos"), dtype="<f4")
+        joint_vel = np.asarray(frames.get("joint_vel"), dtype="<f4")
+        body_quat = np.asarray(frames.get("body_quat_w"), dtype="<f4")
+        frame_index = np.asarray(frames.get("frame_index"), dtype="<i8")
+        if joint_pos.ndim != 2 or joint_pos.shape[1] != 29:
+            raise ValueError("joint_pos must have shape [frames, 29]")
+        count = joint_pos.shape[0]
+        if joint_vel.shape != (count, 29):
+            raise ValueError("joint_vel must match joint_pos shape")
+        if body_quat.shape != (count, 4):
+            raise ValueError("body_quat_w must have shape [frames, 4]")
+        if frame_index.shape != (count,):
+            raise ValueError("frame_index must have shape [frames]")
+        if count <= 0:
+            raise ValueError("reference motion must not be empty")
+        fields = [
+            {"name": "joint_pos", "dtype": "f32", "shape": [count, 29]},
+            {"name": "joint_vel", "dtype": "f32", "shape": [count, 29]},
+            {"name": "body_quat_w", "dtype": "f32", "shape": [count, 4]},
+            {"name": "encode_mode", "dtype": "i32", "shape": [1]},
+            {"name": "motion_id", "dtype": "i32", "shape": [1]},
+            {"name": "frame_index", "dtype": "i64", "shape": [count]},
+            {"name": "catch_up", "dtype": "u8", "shape": [1]},
+        ]
+        data = b"".join(
+            [
+                np.ascontiguousarray(joint_pos).tobytes(),
+                np.ascontiguousarray(joint_vel).tobytes(),
+                np.ascontiguousarray(body_quat).tobytes(),
+                struct.pack("<i", int(frames.get("encode_mode", 0))),
+                struct.pack("<i", int(frames.get("motion_id", -1))),
+                np.ascontiguousarray(frame_index).tobytes(),
+                struct.pack("B", 1),
+            ]
+        )
+        self._send_packed(
+            "pose",
+            {"v": 1, "endian": "le", "count": count, "fields": fields},
+            data,
+        )
+
     def _send_packed(self, topic: str, header: dict[str, Any], data: bytes) -> None:
         import json
 

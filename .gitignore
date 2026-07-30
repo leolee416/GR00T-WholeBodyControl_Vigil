@@ -209,6 +209,9 @@ teleop_vids/
 *.code-workspace
 # Motion/training data (large local datasets, not tracked in git)
 data/
+!gear_sonic/vigil_bridge/data/
+!gear_sonic/vigil_bridge/data/facee_chair_13s/
+!gear_sonic/vigil_bridge/data/facee_chair_13s/*
 bones_seed_smpl/
 sonic_release/
 # Training output logs
