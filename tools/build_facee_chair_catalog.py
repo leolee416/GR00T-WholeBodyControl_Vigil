@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build the real-bridge FaceE chair-motion catalog from GRAIL v64.
+"""Build the real-bridge FaceE chair-motion catalog for no-height v73.
 
 This is an offline packaging tool.  Run it with the restored GRAIL Sonic
 environment; the real-robot bridge itself only needs NumPy and the generated
-manifest/NPZ files.
+manifest/NPZ files.  The 16 strict-success motions come from the v64 selection;
+d1.35/d1.40 are deliberately overridden by the task-accepted d1.45 reference.
 """
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = REPO_ROOT / "gear_sonic/vigil_bridge/data/facee_chair_13s"
+DEPLOYMENT_DECISION = (
+    "out/faceE_sonic_v1_1_noheight_v65/"
+    "deployment_candidate_v73_task_accept_20260730.json"
+)
+TASK_ACCEPT_TAGS = {"d1p35", "d1p40"}
 
 
 def sha256(path: Path) -> str:
@@ -46,6 +52,22 @@ def main() -> None:
 
     selection_path = grail_root / "out/faceE_all_success_hold13_selected_v64/results.json"
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    deployment_path = grail_root / DEPLOYMENT_DECISION
+    deployment = json.loads(deployment_path.read_text(encoding="utf-8"))
+    checkpoint_path = Path(deployment["checkpoint"]).resolve()
+    if not checkpoint_path.is_relative_to(grail_root):
+        raise ValueError("deployment checkpoint must be inside --grail-root")
+    if sha256(checkpoint_path) != deployment["checkpoint_sha256"]:
+        raise ValueError("deployment checkpoint checksum mismatch")
+    deployment_rows = {
+        f"d{float(row['distance_m']):.2f}".replace(".", "p"): row
+        for row in deployment["rows"]
+    }
+    if set(deployment_rows) != TASK_ACCEPT_TAGS:
+        raise ValueError(
+            f"deployment decision must override {sorted(TASK_ACCEPT_TAGS)}, "
+            f"got {sorted(deployment_rows)}"
+        )
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
@@ -62,14 +84,39 @@ def main() -> None:
     )
     humanoid = Humanoid_Batch(cfg, torch.device("cpu"))
     records = []
+    generated: dict[str, dict[str, np.ndarray]] = {}
     for item in selection["results"]:
-        source_path = (
-            grail_root
-            / item["motion_library"]
-            / "robot"
-            / f"{item['motion_key']}.pkl"
-        )
-        source = joblib.load(source_path)[item["motion_key"]]
+        tag = item["tag"]
+        deployment_row = deployment_rows.get(tag)
+        if deployment_row is None:
+            source_path = (
+                grail_root
+                / item["motion_library"]
+                / "robot"
+                / f"{item['motion_key']}.pkl"
+            )
+            motion_key = item["motion_key"]
+            source_motion_library = item["motion_library"]
+            task_level_status = "STRICT_TRACKING_OK"
+            strict_tracking_status = "OK"
+            strict_tracking_progress = 1.0
+            strict_tracking_reason = ""
+            reuses_reference_tag = None
+        else:
+            source_path = Path(deployment_row["robot_reference"]).resolve()
+            if not source_path.is_relative_to(grail_root):
+                raise ValueError(f"{tag}: robot reference must be inside --grail-root")
+            if sha256(source_path) != deployment_row["robot_reference_sha256"]:
+                raise ValueError(f"{tag}: deployment robot reference checksum mismatch")
+            motion_key = deployment_row["motion_key"]
+            source_motion_library = str(source_path.parent.parent.relative_to(grail_root))
+            task_level_status = deployment_row["task_level_status"]
+            strict_tracking_status = deployment_row["strict_tracking_status"]
+            strict_tracking_progress = float(deployment_row["strict_progress"])
+            strict_tracking_reason = deployment_row["strict_reason"]
+            reuses_reference_tag = "d1p45"
+
+        source = joblib.load(source_path)[motion_key]
         pose = torch.as_tensor(source["pose_aa"]).float().unsqueeze(0)
         trans = torch.as_tensor(source["root_trans_offset"]).float().unsqueeze(0)
         fk = humanoid.fk_batch(
@@ -89,7 +136,6 @@ def main() -> None:
         if root_quat_wxyz.shape != (650, 4):
             raise ValueError(f"{item['tag']}: unexpected root quaternion shape")
 
-        tag = item["tag"]
         motion_file = output / f"{tag}.npz"
         np.savez_compressed(
             motion_file,
@@ -98,32 +144,55 @@ def main() -> None:
             body_quat_w=root_quat_wxyz,
             frame_index=np.arange(650, dtype=np.int64),
         )
+        generated[tag] = {
+            "joint_pos": joint_pos,
+            "joint_vel": joint_vel,
+            "body_quat_w": root_quat_wxyz,
+        }
         records.append(
             {
                 "tag": tag,
                 "distance_m": float(item["distance_m"]),
-                "motion_name": item["motion_key"],
+                "motion_name": motion_key,
                 "file": motion_file.name,
                 "sha256": sha256(motion_file),
                 "fps": 50,
                 "frames": 650,
                 "duration_s": 13.0,
                 "encode_mode": 0,
-                "source_motion_library": item["motion_library"],
-                "source_motion_key": item["motion_key"],
+                "source_motion_library": source_motion_library,
+                "source_motion_key": motion_key,
                 "source_robot_pkl_sha256": sha256(source_path),
+                "task_level_status": task_level_status,
+                "strict_tracking_status": strict_tracking_status,
+                "strict_tracking_progress": strict_tracking_progress,
+                "strict_tracking_reason": strict_tracking_reason,
+                "reuses_reference_tag": reuses_reference_tag,
             }
         )
 
+    for tag in sorted(TASK_ACCEPT_TAGS):
+        for field in ("joint_pos", "joint_vel", "body_quat_w"):
+            if not np.array_equal(generated[tag][field], generated["d1p45"][field]):
+                raise ValueError(f"{tag}: {field} must exactly reuse d1p45")
+
     manifest = {
         "schema_version": 1,
-        "name": "faceE_all_success_hold13_selected_v64_real_bridge",
+        "name": "faceE_v73_noheight_task_accept_real_bridge",
         "source_results": str(selection_path.relative_to(grail_root)),
         "source_results_sha256": sha256(selection_path),
+        "deployment_decision": str(deployment_path.relative_to(grail_root)),
+        "deployment_decision_sha256": sha256(deployment_path),
+        "policy_checkpoint": str(checkpoint_path.relative_to(grail_root)),
+        "policy_checkpoint_sha256": deployment["checkpoint_sha256"],
+        "policy_observation_contract": deployment["actor_observation_contract"],
+        "strict_tracking_successes": int(deployment["strict_tracking_successes"]),
+        "task_level_acceptances": int(deployment["task_level_acceptances"]),
         "construction": (
             "Gear-SONIC Humanoid_Batch FK with the source FPS and target_fps=50; "
             "joint positions/velocities plus root quaternion are serialized for "
-            "ZMQ streamed-motion protocol v1."
+            "ZMQ streamed-motion protocol v1. d1.35/d1.40 reuse the exact d1.45 "
+            "robot reference under the user-approved task-level acceptance."
         ),
         "selection_policy": (
             "ceil measured distance to the next available 0.05 m reference; "

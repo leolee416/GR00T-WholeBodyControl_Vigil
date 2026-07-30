@@ -1,9 +1,16 @@
 {
   "schema_version": 1,
-  "name": "faceE_all_success_hold13_selected_v64_real_bridge",
+  "name": "faceE_v73_noheight_task_accept_real_bridge",
   "source_results": "out/faceE_all_success_hold13_selected_v64/results.json",
   "source_results_sha256": "37459f5e8b8de588b2d0062316c4a3ce6d07706273473d98841c1999563b12a6",
-  "construction": "Gear-SONIC Humanoid_Batch FK with the source FPS and target_fps=50; joint positions/velocities plus root quaternion are serialized for ZMQ streamed-motion protocol v1.",
+  "deployment_decision": "out/faceE_sonic_v1_1_noheight_v65/deployment_candidate_v73_task_accept_20260730.json",
+  "deployment_decision_sha256": "46175cc5c5b835424ed4482cb399be00df33d75c382c72c26fb6770ca79c5bc1",
+  "policy_checkpoint": "out/faceE_sonic_v1_1_noheight_v65/dagger_v69iter100_balanced_freezeenc_fixedlr2e6_30iter_v73/model_step_000025.pt",
+  "policy_checkpoint_sha256": "610bc1bd21e30ca9dd9690a5096ddf3f54ca7b3fe7fb3ddf3ed73c65ead049c9",
+  "policy_observation_contract": "reference_motion_plus_proprioception_no_height_map_no_chair_pose",
+  "strict_tracking_successes": 16,
+  "task_level_acceptances": 2,
+  "construction": "Gear-SONIC Humanoid_Batch FK with the source FPS and target_fps=50; joint positions/velocities plus root quaternion are serialized for ZMQ streamed-motion protocol v1. d1.35/d1.40 reuse the exact d1.45 robot reference under the user-approved task-level acceptance.",
   "selection_policy": "ceil measured distance to the next available 0.05 m reference; measured range [1.10, 2.00] m",
   "count": 18,
   "motions": [
@@ -19,7 +26,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p15",
       "source_motion_key": "faceE_optimized_grounded_d1p15m_hold13s_v61",
-      "source_robot_pkl_sha256": "cf2806812a2f4b908ac8b31897b7d774a4ccd9878f28ded53838cd14dea3dde8"
+      "source_robot_pkl_sha256": "cf2806812a2f4b908ac8b31897b7d774a4ccd9878f28ded53838cd14dea3dde8",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p20",
@@ -33,7 +45,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p20",
       "source_motion_key": "faceE_optimized_grounded_d1p20m_hold13s_v61",
-      "source_robot_pkl_sha256": "f2d7da2b601c698f3ed8b9141c8ff3bb37f0030ae37e941a2fbd7518feaadcf2"
+      "source_robot_pkl_sha256": "f2d7da2b601c698f3ed8b9141c8ff3bb37f0030ae37e941a2fbd7518feaadcf2",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p25",
@@ -47,7 +64,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p25",
       "source_motion_key": "faceE_optimized_grounded_d1p25m_hold13s_v61",
-      "source_robot_pkl_sha256": "fd7b7c75937fd295fe6e8f177023db428bd1118a8a6827bf2833724b35aae319"
+      "source_robot_pkl_sha256": "fd7b7c75937fd295fe6e8f177023db428bd1118a8a6827bf2833724b35aae319",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p30",
@@ -61,35 +83,50 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_hold13_runtime50_v62/d1p30",
       "source_motion_key": "faceE_backless_d1p30m_hold13s_runtime50_v62",
-      "source_robot_pkl_sha256": "4b276b5c1c4353a6788f5cfbebb5910b08bb5053218a96c8647d6567432eace5"
+      "source_robot_pkl_sha256": "4b276b5c1c4353a6788f5cfbebb5910b08bb5053218a96c8647d6567432eace5",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p35",
       "distance_m": 1.35,
-      "motion_name": "faceE_backless_d1p35m_hold13s_v61",
+      "motion_name": "faceE_refd1p45_chaird1p35_noheight_v79",
       "file": "d1p35.npz",
-      "sha256": "966744777016b9653eb744c757184a97651a9827c2d115b03d30aa9baed4d3cf",
+      "sha256": "2b1ec414e10a00bb9f3a8bbf729e5695c431d97d309992ee2041bfdcef4683a1",
       "fps": 50,
       "frames": 650,
       "duration_s": 13.0,
       "encode_mode": 0,
-      "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p35",
-      "source_motion_key": "faceE_backless_d1p35m_hold13s_v61",
-      "source_robot_pkl_sha256": "9ad0c7c9f6bb8c7f440303ccac85149f1c9ab16b425f8f442599690e21aa0689"
+      "source_motion_library": "data/motion_lib/sitting_faceE_refd1p45_chaircloser_noheight_v79/d1p35",
+      "source_motion_key": "faceE_refd1p45_chaird1p35_noheight_v79",
+      "source_robot_pkl_sha256": "cb04c8430270378039af351c5ff0726eceec461445d124833cfcc6c97a735e61",
+      "task_level_status": "ACCEPT",
+      "strict_tracking_status": "FAIL",
+      "strict_tracking_progress": 0.751,
+      "strict_tracking_reason": "anchor_ori_full",
+      "reuses_reference_tag": "d1p45"
     },
     {
       "tag": "d1p40",
       "distance_m": 1.4,
-      "motion_name": "faceE_backless_d1p40m_hold13s_v61",
+      "motion_name": "faceE_refd1p45_chaird1p40_noheight_v79",
       "file": "d1p40.npz",
-      "sha256": "e330c84a5a60c9e347ae346f9e193611aa091406a0811e9f64037b5c36e2e1f9",
+      "sha256": "2b1ec414e10a00bb9f3a8bbf729e5695c431d97d309992ee2041bfdcef4683a1",
       "fps": 50,
       "frames": 650,
       "duration_s": 13.0,
       "encode_mode": 0,
-      "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p40",
-      "source_motion_key": "faceE_backless_d1p40m_hold13s_v61",
-      "source_robot_pkl_sha256": "243e683b582031a3d9d22ff08dddbfa650074faee0c6d5d47849d59be8c238a4"
+      "source_motion_library": "data/motion_lib/sitting_faceE_refd1p45_chaircloser_noheight_v79/d1p40",
+      "source_motion_key": "faceE_refd1p45_chaird1p40_noheight_v79",
+      "source_robot_pkl_sha256": "d87defe3237e70fd5308031a6ee2c4cbc92a53a132276a9f13d082da69c4fa28",
+      "task_level_status": "ACCEPT",
+      "strict_tracking_status": "FAIL",
+      "strict_tracking_progress": 0.758,
+      "strict_tracking_reason": "anchor_ori_full",
+      "reuses_reference_tag": "d1p45"
     },
     {
       "tag": "d1p45",
@@ -103,7 +140,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p45",
       "source_motion_key": "faceE_refd1p50_chaird1p45_v49_hold13s_v61",
-      "source_robot_pkl_sha256": "5f644e1332084990b9ee4a9d353b3c4818ba01a3c77c20b766e09fc7f096942b"
+      "source_robot_pkl_sha256": "5f644e1332084990b9ee4a9d353b3c4818ba01a3c77c20b766e09fc7f096942b",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p50",
@@ -117,7 +159,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p50",
       "source_motion_key": "faceE_backless_longwalk_d1p50m_hold13s_v61",
-      "source_robot_pkl_sha256": "7f516eed2895e30928f817fe6ae903679ac91b7a08fa69d8b39f87e11e0f0d8f"
+      "source_robot_pkl_sha256": "7f516eed2895e30928f817fe6ae903679ac91b7a08fa69d8b39f87e11e0f0d8f",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p55",
@@ -131,7 +178,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p55",
       "source_motion_key": "faceE_refd1p60_chaird1p55_v49_hold13s_v61",
-      "source_robot_pkl_sha256": "b1be1a5c43007abc402356d9f679f8d555071a2ae6a1019f6fadbfa8436dc714"
+      "source_robot_pkl_sha256": "b1be1a5c43007abc402356d9f679f8d555071a2ae6a1019f6fadbfa8436dc714",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p60",
@@ -145,7 +197,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p60",
       "source_motion_key": "faceE_backless_longwalk_d1p60m_hold13s_v61",
-      "source_robot_pkl_sha256": "028f740d99ecf6dce4a3593e38d255523c34f8165786a24bd48cc9e01222708a"
+      "source_robot_pkl_sha256": "028f740d99ecf6dce4a3593e38d255523c34f8165786a24bd48cc9e01222708a",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p65",
@@ -159,7 +216,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p65",
       "source_motion_key": "faceE_refd1p75_chaird1p65_v51_hold13s_v61",
-      "source_robot_pkl_sha256": "3aef7293ca18750793d21af175632bdead0a0d5c550dc7aeb9c543958a75b8f8"
+      "source_robot_pkl_sha256": "3aef7293ca18750793d21af175632bdead0a0d5c550dc7aeb9c543958a75b8f8",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p70",
@@ -173,7 +235,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p70",
       "source_motion_key": "faceE_refd1p75_chaird1p70_v51_hold13s_v61",
-      "source_robot_pkl_sha256": "0fe795fe9d1236f5355511c3918eb28e3b0cabda0c29308d0700790745a93f37"
+      "source_robot_pkl_sha256": "0fe795fe9d1236f5355511c3918eb28e3b0cabda0c29308d0700790745a93f37",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p75",
@@ -187,7 +254,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p75",
       "source_motion_key": "faceE_backless_longwalk_d1p75m_hold13s_v61",
-      "source_robot_pkl_sha256": "03650262c3c949c6f60175f0f37657daf3e66bb28343d6222ac5a50f3cfd24ec"
+      "source_robot_pkl_sha256": "03650262c3c949c6f60175f0f37657daf3e66bb28343d6222ac5a50f3cfd24ec",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p80",
@@ -201,7 +273,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_hold13_runtime50_v63/d1p80",
       "source_motion_key": "faceE_d1p90_terminal_contact_repair_chair_d1p80_v59_hold13s_runtime50_v63",
-      "source_robot_pkl_sha256": "27c09bb71096408354d3738c4d596d5d84f25284b41374ee1491b3088f510927"
+      "source_robot_pkl_sha256": "27c09bb71096408354d3738c4d596d5d84f25284b41374ee1491b3088f510927",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p85",
@@ -215,7 +292,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p85",
       "source_motion_key": "faceE_d1p90_terminal_contact_repair_chair_d1p85_v59_hold13s_v61",
-      "source_robot_pkl_sha256": "043f2733aeae1e0c84f66879f0af7c0017369d0f6468610f3687bc49befffd3b"
+      "source_robot_pkl_sha256": "043f2733aeae1e0c84f66879f0af7c0017369d0f6468610f3687bc49befffd3b",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p90",
@@ -229,7 +311,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p90",
       "source_motion_key": "faceE_d1p75_gait_to_d1p90_c39_67_hold13s_v61",
-      "source_robot_pkl_sha256": "54b5dc1b7d04017197451add7063695a7c5cb55180cd10dffb4a8f707d5ed34a"
+      "source_robot_pkl_sha256": "54b5dc1b7d04017197451add7063695a7c5cb55180cd10dffb4a8f707d5ed34a",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d1p95",
@@ -243,7 +330,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p95",
       "source_motion_key": "faceE_d1p75_gait_to_d1p95_c39_67_hold13s_v61",
-      "source_robot_pkl_sha256": "5a8c507e708dd89f197593470dcf6661407750a0f85cd62b52d7ebb5a16bb68e"
+      "source_robot_pkl_sha256": "5a8c507e708dd89f197593470dcf6661407750a0f85cd62b52d7ebb5a16bb68e",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     },
     {
       "tag": "d2p00",
@@ -257,7 +349,12 @@
       "encode_mode": 0,
       "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d2p00",
       "source_motion_key": "faceE_d1p75_gait_to_d2p00_c39_67_hold13s_v61",
-      "source_robot_pkl_sha256": "0c45286f6c4e80b8ce74ce0474a5ee0267fa4b554af4dcc50b6a205c76651cde"
+      "source_robot_pkl_sha256": "0c45286f6c4e80b8ce74ce0474a5ee0267fa4b554af4dcc50b6a205c76651cde",
+      "task_level_status": "STRICT_TRACKING_OK",
+      "strict_tracking_status": "OK",
+      "strict_tracking_progress": 1.0,
+      "strict_tracking_reason": "",
+      "reuses_reference_tag": null
     }
   ]
 }

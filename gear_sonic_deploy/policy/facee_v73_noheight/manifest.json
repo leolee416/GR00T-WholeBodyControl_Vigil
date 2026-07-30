@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "name": "facee_v73_noheight_task_accept",
+  "source_checkpoint": "out/faceE_sonic_v1_1_noheight_v65/dagger_v69iter100_balanced_freezeenc_fixedlr2e6_30iter_v73/model_step_000025.pt",
+  "source_checkpoint_sha256": "610bc1bd21e30ca9dd9690a5096ddf3f54ca7b3fe7fb3ddf3ed73c65ead049c9",
+  "observation_contract": "reference_motion_plus_proprioception_no_height_map_no_chair_pose",
+  "actor_inputs": {
+    "reference_motion": true,
+    "proprioception": true,
+    "height_map_z_flat": false,
+    "chair_relative_position": false,
+    "chair_relative_orientation": false
+  },
+  "models": {
+    "encoder": {
+      "input_name": "obs_dict",
+      "input_shape": [
+        1,
+        1751
+      ],
+      "output_name": "encoded_tokens",
+      "output_shape": [
+        1,
+        64
+      ],
+      "opset": 13,
+      "node_count": 241,
+      "size_bytes": 50040994,
+      "sha256": "33c88827b13d0270a1e7f036b882284e6a2429e37f9bdb21b60c706d916ca849"
+    },
+    "decoder": {
+      "input_name": "obs_dict",
+      "input_shape": [
+        1,
+        994
+      ],
+      "output_name": "action",
+      "output_shape": [
+        1,
+        29
+      ],
+      "opset": 13,
+      "node_count": 48,
+      "size_bytes": 40888206,
+      "sha256": "1bea1e29e8f243cc312e15fe0858c751d48e97ccbaa45ef419e6e4db210c14f7"
+    }
+  },
+  "pytorch_onnx_parity": {
+    "encoder": {
+      "schema_version": 1,
+      "onnx_file": "model_step_000025_encoder.onnx",
+      "provider": "CPUExecutionProvider",
+      "input_name": "obs_dict",
+      "input_shape": [
+        1,
+        1751
+      ],
+      "output_name": "encoded_tokens",
+      "output_shape": [
+        1,
+        64
+      ],
+      "max_abs_error": 0.0,
+      "mean_abs_error": 0.0,
+      "rtol": 0.0001,
+      "atol": 1e-05,
+      "allclose": true
+    },
+    "decoder": {
+      "schema_version": 1,
+      "onnx_file": "model_step_000025_decoder.onnx",
+      "provider": "CPUExecutionProvider",
+      "input_name": "obs_dict",
+      "input_shape": [
+        1,
+        994
+      ],
+      "output_name": "action",
+      "output_shape": [
+        1,
+        29
+      ],
+      "max_abs_error": 1.5497207641601562e-06,
+      "mean_abs_error": 4.989319677406456e-07,
+      "rtol": 0.0001,
+      "atol": 1e-05,
+      "allclose": true
+    }
+  },
+  "motion_catalog": "gear_sonic/vigil_bridge/data/facee_chair_13s/manifest.json",
+  "acceptance": {
+    "strict_tracking_successes": 16,
+    "task_level_acceptances": 2,
+    "task_level_acceptance_distances_m": [
+      1.35,
+      1.4
+    ],
+    "note": "1.35/1.40 reuse the exact 1.45 robot reference and were accepted for sitting task completion despite strict anchor_ori_full termination."
+  },
+  "deployment_status": {
+    "real_robot_authorized": false,
+    "reason": "ONNX export parity and Isaac task acceptance do not authorize hardware. Independent MuJoCo screening must pass before opt-in use."
+  }
+}

@@ -68,6 +68,35 @@ def test_start_forwards_audio_and_tts_options_to_bridge_command() -> None:
     assert "--audio-speaker-runner /tmp/g1_speaker_runner" in script
 
 
+def test_policy_script_preserves_release_policy_default() -> None:
+    args = _parse_start_args()
+
+    script = launcher._policy_script(args, Path("/tmp/policy.log"))
+
+    assert "--checkpoint policy/release/model" in script
+    assert (
+        "--obs-config policy/release/observation_config.yaml"
+        in script
+    )
+
+
+def test_policy_script_can_opt_in_to_facee_v73_noheight_models() -> None:
+    args = _parse_start_args(
+        "--policy-checkpoint",
+        "policy/facee_v73_noheight/model",
+        "--policy-observation-config",
+        "policy/facee_v73_noheight/observation_config.yaml",
+    )
+
+    script = launcher._policy_script(args, Path("/tmp/policy.log"))
+
+    assert "--checkpoint policy/facee_v73_noheight/model" in script
+    assert (
+        "--obs-config policy/facee_v73_noheight/observation_config.yaml"
+        in script
+    )
+
+
 def test_audio_options_require_explicit_audio_enable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     args = _parse_start_args("--audio-ws")
     deploy_dir = tmp_path / "deploy"
@@ -76,6 +105,11 @@ def test_audio_options_require_explicit_audio_enable(tmp_path: Path, monkeypatch
     (tensorrt_root / "include").mkdir(parents=True)
     (tensorrt_root / "include" / "NvInfer.h").write_text("", encoding="utf-8")
     (tensorrt_root / "lib").mkdir()
+    policy_dir = deploy_dir / "policy" / "release"
+    policy_dir.mkdir(parents=True)
+    (policy_dir / "model_encoder.onnx").write_bytes(b"test")
+    (policy_dir / "model_decoder.onnx").write_bytes(b"test")
+    (policy_dir / "observation_config.yaml").write_text("", encoding="utf-8")
     args.tensorrt_root = str(tensorrt_root)
     monkeypatch.setattr(launcher, "DEPLOY_DIR", deploy_dir)
 

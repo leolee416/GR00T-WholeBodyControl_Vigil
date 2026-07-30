@@ -176,6 +176,8 @@ huggingface/
 *.ckpt
 *.safetensors
 *.engine
+!gear_sonic_deploy/policy/facee_v73_noheight/model_encoder.onnx
+!gear_sonic_deploy/policy/facee_v73_noheight/model_decoder.onnx
 !decoupled_wbc/sim2mujoco/resources/robots/g1/policy/GR00T-WholeBodyControl-Balance.onnx
 !decoupled_wbc/sim2mujoco/resources/robots/g1/policy/GR00T-WholeBodyControl-Walk.onnx
 !motionbricks/out/**/*.ckpt

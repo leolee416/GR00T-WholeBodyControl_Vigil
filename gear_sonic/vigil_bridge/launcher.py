@@ -28,6 +28,10 @@ DEFAULT_CONTAINER = "g1-deploy-dev"
 DEFAULT_TENSORRT_ROOT = "/home/unitree/TensorRT-10.7.0.23"
 DEFAULT_CAMERA_SERVICE = "composed_camera_server_vigil.service"
 DEFAULT_LEGACY_CAMERA_SERVICE = "composed_camera_server.service"
+DEFAULT_POLICY_CHECKPOINT = "policy/release/model"
+DEFAULT_POLICY_OBSERVATION_CONFIG = (
+    "policy/release/observation_config.yaml"
+)
 RUNTIME_ROOT = Path("/tmp/vigil_bridge_launcher")
 
 
@@ -69,6 +73,22 @@ def _build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--input-type", default="zmq_manager", help="deploy input type.")
     start_parser.add_argument("--output-type", default="zmq", help="deploy output type.")
     start_parser.add_argument("--zmq-host", default="127.0.0.1", help="deploy ZMQ command host.")
+    start_parser.add_argument(
+        "--policy-checkpoint",
+        default=DEFAULT_POLICY_CHECKPOINT,
+        help=(
+            "deploy.sh checkpoint prefix, relative to gear_sonic_deploy unless absolute. "
+            "Defaults to the existing release policy; FaceE v73 is an explicit opt-in."
+        ),
+    )
+    start_parser.add_argument(
+        "--policy-observation-config",
+        default=DEFAULT_POLICY_OBSERVATION_CONFIG,
+        help=(
+            "deploy.sh observation YAML, relative to gear_sonic_deploy unless absolute. "
+            "It must match the selected encoder/decoder."
+        ),
+    )
     start_parser.add_argument("--bridge-host", default="0.0.0.0", help="HTTP bridge bind host.")
     start_parser.add_argument("--bridge-port", type=int, default=8765, help="HTTP bridge bind port.")
     start_parser.add_argument("--command-bind-host", default="127.0.0.1", help="Bridge ZMQ command PUB bind host.")
@@ -393,6 +413,10 @@ def _policy_script(args: argparse.Namespace, log_path: Path) -> str:
             shlex.quote(args.output_type),
             "--zmq-host",
             shlex.quote(args.zmq_host),
+            "--checkpoint",
+            shlex.quote(args.policy_checkpoint),
+            "--obs-config",
+            shlex.quote(args.policy_observation_config),
         ]
     )
     container_command = f"cd /workspace/g1_deploy && source scripts/setup_env.sh && printf '\\n' | {deploy_cmd}"
@@ -550,6 +574,16 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         raise SystemExit(
             f"chair motion catalog not found: {args.chair_motion_catalog}"
         )
+    checkpoint = _deploy_path(args.policy_checkpoint)
+    for suffix in ("_encoder.onnx", "_decoder.onnx"):
+        model_path = Path(f"{checkpoint}{suffix}")
+        if not model_path.is_file():
+            raise SystemExit(f"policy ONNX model not found: {model_path}")
+    observation_config = _deploy_path(args.policy_observation_config)
+    if not observation_config.is_file():
+        raise SystemExit(
+            f"policy observation config not found: {observation_config}"
+        )
     if not args.audio_enabled and (
         args.audio_advertise_always
         or args.audio_mic_interface_ip
@@ -571,6 +605,11 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         raise SystemExit("--audio-ws-port must be positive")
     if args.audio_ws_host and not args.audio_ws:
         raise SystemExit("--audio-ws-host requires --audio-ws")
+
+
+def _deploy_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else DEPLOY_DIR / path
 
 
 def _audio_bridge_args(args: argparse.Namespace) -> list[str]:

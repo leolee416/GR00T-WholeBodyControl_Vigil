@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "onnx_file": "model_step_000025_encoder.onnx",
+  "provider": "CPUExecutionProvider",
+  "input_name": "obs_dict",
+  "input_shape": [
+    1,
+    1751
+  ],
+  "output_name": "encoded_tokens",
+  "output_shape": [
+    1,
+    64
+  ],
+  "max_abs_error": 0.0,
+  "mean_abs_error": 0.0,
+  "rtol": 0.0001,
+  "atol": 1e-05,
+  "allclose": true
+}
