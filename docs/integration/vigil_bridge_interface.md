@@ -63,11 +63,11 @@ python gear_sonic_deploy/scripts/run_vigil_bridge.py --host 127.0.0.1 --port 876
 | `POST` | `/halt` | optional object | `RuntimeHealth` | 安全停止/idle 接口 |
 | `POST` | `/pause` | optional object | `RuntimeHealth` | 保留 policy/deploy；停止推理并让真机保持 `default_angles` |
 | `POST` | `/resume` | optional object | `RuntimeHealth` | 从 paused runtime 重新接入 policy |
-| `POST` | `/rollout/start` | session metadata | rollout status | 开始记录 `g1_debug` 实测关节/IMU |
+| `POST` | `/rollout/start` | session/capture metadata | rollout status | 可选：预先设置坐下窗口 session；默认也可由 `sonic.sit_chair` 自动触发 |
 | `POST` | `/rollout/localization` | external `base_xyz` + source | rollout status | 写入外部定位；不会使用固定的 `base_trans_measured` |
 | `POST` | `/rollout/context` | motion/chair context | rollout status | 更新 motion name、reference distance 等上下文 |
 | `GET/POST` | `/rollout/status` | optional object | rollout status | 查看样本数、丢帧数和定位新鲜度 |
-| `POST` | `/rollout/stop` | export options | export manifest | 停止并导出 raw、3DGS 和 Gear-Sonic candidate NPZ |
+| `POST` | `/rollout/stop` | export options | export manifest | 可选：提前结束 post-roll；默认动作后最多 3 秒自动导出 |
 | `POST` | `/close` | optional object | close response | 释放 bridge 资源；不要假设会停止 deploy/policy |
 | `GET/POST` | `/audio/health` | optional object | audio health object | 音频 I/O 健康检查；未启用时返回结构化不可用 |
 | `POST` | `/audio/session/start` | audio session options | audio session response | 启动音频 session；HTTP fallback 和 WebSocket 共用 session manager |

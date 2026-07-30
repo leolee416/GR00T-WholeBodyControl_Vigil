@@ -1,6 +1,12 @@
 # Vigil Bridge 真机 Rollout 录制与导出
 
-Vigil Bridge 可以从 deploy 已有的 `g1_debug` ZMQ 流录制 G1 的实测关节状态，并在停止录制时一次性导出：
+Vigil Bridge 可以从 deploy 已有的 `g1_debug` ZMQ 流录制 G1 的实测关节状态。默认只保留：
+
+- `sonic.sit_chair` 开始前最多 3 秒；
+- 完整坐下动作期间；
+- 动作结束后最多 3 秒。
+
+动作后窗口结束时自动导出：
 
 - `raw_real_rollout.npz`：未经重采样的真机原始记录。
 - `3dgs_replay.npz`：3DGS/可视化侧运动学回放输入。
@@ -42,9 +48,32 @@ python gear_sonic_deploy/scripts/run_vigil_bridge.py \
 外部定位默认超过 0.5 秒即视为过期。可通过
 `--rollout-localization-max-age 0.5` 调整。
 
+## 默认坐下窗口
+
+Recorder 在未录制时只维护一个最多 3 秒的内存环形缓存，不会把更早的走路、
+等待或调试 pose 写入导出文件。
+
+当 Bridge 收到 `/execute_action` 的 `sonic.sit_chair` 时：
+
+1. 自动创建 session，无需预先调用 `/rollout/start`。
+2. 把最近最多 3 秒缓存作为 `pre`。
+3. 记录动作调用期间为 `action`。
+4. 动作完成后继续记录最多 3 秒作为 `post`。
+5. 自动停止并生成三个 NPZ 和 `manifest.json`。
+
+坐下 reference 是异步下发的，因此 Bridge 不会把“发送完 reference”误当成动作结束：
+它使用所选 motion 的 `duration_s` 延长 `action` 窗口，motion 播放完成后才开始
+计算 3 秒 post-roll。
+
+`raw_real_rollout.npz` 中的 `capture_phase` 会逐帧标记
+`pre/action/post`。`manifest.json` 会记录实际保留的
+`recorded_pre_roll_s`、`recorded_post_roll_s` 和各阶段样本数。
+
+`pre_roll_s` 和 `post_roll_s` 都被硬限制在 `[0, 3]` 秒，不能配置得更长。
+
 ## 一次录制流程
 
-### 1. 开始录制
+### 1. 可选：预先设置 session 元数据
 
 ```bash
 curl -X POST http://127.0.0.1:8765/rollout/start \
@@ -53,6 +82,11 @@ curl -X POST http://127.0.0.1:8765/rollout/start \
     "session_name": "walk_to_chair_001",
     "episode_id": "real_001",
     "checkpoint": "/path/to/policy.onnx",
+    "capture_mode": "skill_window",
+    "capture_skill": "sonic.sit_chair",
+    "pre_roll_s": 3,
+    "post_roll_s": 3,
+    "auto_export": true,
     "chair_world_pose": {
       "position_xyz": [2.1, 0.4, 0.0],
       "orientation_wxyz": [1.0, 0.0, 0.0, 0.0],
@@ -63,6 +97,9 @@ curl -X POST http://127.0.0.1:8765/rollout/start \
     }
   }'
 ```
+
+这一步不是启动坐下动作，只是提前创建 session 并写入 checkpoint、椅子位姿等
+元数据。省略时，第一次执行 `sonic.sit_chair` 会自动创建 session。
 
 `chair_world_pose.estimated` 应准确表示该位姿是否为感知估计，不得把估计值标为 ground truth。
 
@@ -87,7 +124,8 @@ curl -X POST http://127.0.0.1:8765/rollout/localization \
 同一份有效定位也会填入 real backend 的 `/robot_state.base_pose`；过期后自动恢复为
 `x_m/y_m/z_m=null` 和 `translation_valid=false`。
 
-如果动作不是通过 `/execute_action` 发起，可以显式设置上下文：
+如果动作不是通过 `/execute_action` 发起，可以显式设置上下文，但自动动作窗口
+只会由 Bridge 的 `sonic.sit_chair` action lifecycle 触发：
 
 ```bash
 curl -X POST http://127.0.0.1:8765/rollout/context \
@@ -102,7 +140,24 @@ curl -X POST http://127.0.0.1:8765/rollout/context \
 
 通过 Bridge 执行的动作会自动写入 skill、episode、step 和可用的 motion/reference distance 上下文。
 
-### 3. 查看状态
+### 3. 执行坐下并查看状态
+
+正常调用：
+
+```bash
+curl -X POST http://127.0.0.1:8765/execute_action \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "runtime_mode": "real",
+    "episode_id": "real_001",
+    "step_id": 8,
+    "skill_name": "sonic.sit_chair",
+    "arguments": {"chair_distance_m": 0.61},
+    "safety": {}
+  }'
+```
+
+动作返回后，Recorder 还会等待最多 3 秒 post-roll，然后自动导出。
 
 ```bash
 curl http://127.0.0.1:8765/rollout/status
@@ -110,11 +165,16 @@ curl http://127.0.0.1:8765/rollout/status
 
 重点检查：
 
-- `sample_count` 持续增长。
+- `capture.action_started/action_finished`。
+- `capture.post_remaining_s`。
 - `dropped_sample_count` 为 0。
 - `localization.valid` 为 true，且 `age_s` 小于配置阈值。
+- 自动完成后 `active=false`，导出结果在 `last_export`。
 
-### 4. 停止并导出
+### 4. 可选：提前停止
+
+通常不需要调用 `/rollout/stop`。如果不想等待完整 post-roll，可提前停止；
+此时只导出已经收到的 post 数据，仍不会超过 3 秒。
 
 ```bash
 curl -X POST http://127.0.0.1:8765/rollout/stop \
@@ -126,6 +186,10 @@ curl -X POST http://127.0.0.1:8765/rollout/stop \
 ```
 
 响应会返回 session 目录和三个 NPZ 的绝对路径。
+
+如需调试整个任意时间段，可在 `/rollout/start` 显式传
+`"capture_mode": "continuous"`；该模式保留原来的手动 start/stop 行为，
+但不用于默认坐椅数据采集。
 
 ## 导出文件
 
@@ -141,6 +205,7 @@ curl -X POST http://127.0.0.1:8765/rollout/stop \
 - `base_xyz_source[N]`、`base_xyz_frame_id[N]`
 - `body_q_target[N,29]`、`policy_action[N,29]`
 - `motion_name[N]`、`reference_distance_m[N]`
+- `capture_phase[N]`：`pre`、`action` 或 `post`
 - `joint_order[29]`、`metadata_json`
 
 ### `3dgs_replay.npz`

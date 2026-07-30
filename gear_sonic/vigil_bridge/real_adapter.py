@@ -255,6 +255,13 @@ class RealRuntimeClient:
                 break
             time.sleep(min(period_s, remaining_s))
         time.sleep(period_s)
+        if self.rollout_recorder is not None:
+            self.rollout_recorder.mark_action_dispatched(
+                {
+                    **dict(payload),
+                    "skill_name": "sonic.sit_chair",
+                }
+            )
         publisher.send_reference_motion(frames)
         return {
             "motion": "sonic_reference_motion",

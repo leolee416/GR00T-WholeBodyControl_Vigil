@@ -59,6 +59,12 @@ class VigilBridgeService:
                 "source": "g1_debug",
                 "measured_joints": 29,
                 "external_base_localization": True,
+                "default_capture": {
+                    "skill": "sonic.sit_chair",
+                    "pre_roll_max_s": 3.0,
+                    "post_roll_max_s": 3.0,
+                    "auto_export": True,
+                },
                 "exports": [
                     "raw_real_rollout.npz",
                     "3dgs_replay.npz",
@@ -112,6 +118,7 @@ class VigilBridgeService:
         before_response = self.sensor_provider.get_robot_state()
         robot_state_before = dict(before_response.get("robot_state", {}))
         self._update_rollout_action_context(payload)
+        self._begin_rollout_action(payload)
         try:
             action_response = self.executor.execute_action(
                 skill_name=str(payload.get("skill_name", "")),
@@ -119,6 +126,11 @@ class VigilBridgeService:
                 safety=self._mapping_or_empty(payload.get("safety")),
             )
         except Exception as exc:
+            self._finish_rollout_action(
+                payload,
+                action_status="failed",
+                motion_commanded=None,
+            )
             halt_health = self.executor.halt()
             return {
                 "ok": False,
@@ -142,7 +154,6 @@ class VigilBridgeService:
                 },
             }
 
-        after_response = self.sensor_provider.get_robot_state()
         executed_arguments = dict(action_response.get("executed_arguments", {}))
         if executed_arguments:
             executed_arguments.setdefault("skill_name", str(payload.get("skill_name", "")))
@@ -152,6 +163,16 @@ class VigilBridgeService:
                     "arguments": executed_arguments,
                 }
             )
+        completion = self._mapping_or_empty(
+            self._mapping_or_empty(action_response.get("telemetry")).get("completion")
+        )
+        self._finish_rollout_action(
+            payload,
+            action_status=self._action_status(action_response),
+            motion_commanded=completion.get("motion_commanded"),
+            executed_arguments=executed_arguments,
+        )
+        after_response = self.sensor_provider.get_robot_state()
         telemetry = {
             "bridge": "groot_vigil_bridge",
             "phase": self._bridge_phase(),
@@ -344,6 +365,47 @@ class VigilBridgeService:
             self.rollout_recorder.set_motion_context(context)
         except (TypeError, ValueError):
             # Recording metadata must never break execution or trigger robot halt.
+            return
+
+    def _begin_rollout_action(self, payload: Mapping[str, Any]) -> None:
+        if self.rollout_recorder is None:
+            return
+        try:
+            self.rollout_recorder.begin_action(payload)
+        except (RuntimeError, TypeError, ValueError):
+            # Recording must never block or alter robot action execution.
+            return
+
+    def _finish_rollout_action(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        action_status: str,
+        motion_commanded: Any,
+        executed_arguments: Mapping[str, Any] | None = None,
+    ) -> None:
+        if self.rollout_recorder is None:
+            return
+        try:
+            finish_payload = dict(payload)
+            for key in (
+                "duration_s",
+                "motion_name",
+                "reference_distance_m",
+                "chair_distance_m",
+                "tag",
+            ):
+                if executed_arguments is not None and key in executed_arguments:
+                    finish_payload[key] = executed_arguments[key]
+            self.rollout_recorder.finish_action(
+                {
+                    **finish_payload,
+                    "action_status": action_status,
+                    "motion_commanded": motion_commanded,
+                }
+            )
+        except (RuntimeError, TypeError, ValueError):
+            # Recording must never block or alter robot action execution.
             return
 
     def _should_advertise_audio(self, payload: Mapping[str, Any]) -> bool:

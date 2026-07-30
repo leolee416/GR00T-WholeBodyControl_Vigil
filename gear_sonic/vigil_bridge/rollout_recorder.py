@@ -9,16 +9,16 @@ used as measured odometry.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 import math
 import os
-from pathlib import Path
 import re
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 try:
@@ -28,7 +28,8 @@ except ImportError:  # Keep dry-run bridge imports usable in lightweight environ
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ROLLOUT_SCHEMA_VERSION = "groot_real_rollout_v1"
+ROLLOUT_SCHEMA_VERSION = "groot_real_rollout_v2"
+MAX_ACTION_CONTEXT_S = 3.0
 
 G1_JOINT_ORDER: tuple[str, ...] = (
     "left_hip_pitch_joint",
@@ -90,6 +91,7 @@ class RolloutRecorder:
         self._lock = threading.RLock()
         self._active = False
         self._samples: list[dict[str, Any]] = []
+        self._rolling_buffer: list[dict[str, Any]] = []
         self._session_id: str | None = None
         self._session_dir: Path | None = None
         self._started_wall_s: float | None = None
@@ -101,6 +103,18 @@ class RolloutRecorder:
         self._dropped_samples = 0
         self._last_error: str | None = None
         self._last_export: dict[str, Any] | None = None
+        self._capture_mode = "skill_window"
+        self._capture_skill = "sonic.sit_chair"
+        self._pre_roll_s = MAX_ACTION_CONTEXT_S
+        self._post_roll_s = MAX_ACTION_CONTEXT_S
+        self._capture_started_monotonic_s: float | None = None
+        self._capture_finished_monotonic_s: float | None = None
+        self._capture_deadline_monotonic_s: float | None = None
+        self._capture_complete = False
+        self._auto_started = False
+        self._auto_export = True
+        self._auto_export_options: dict[str, Any] = {}
+        self._auto_export_timer: threading.Timer | None = None
 
     def start(self, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
         if np is None:
@@ -110,13 +124,49 @@ class RolloutRecorder:
             if self._active:
                 raise RuntimeError(f"rollout recording is already active: {self._session_id}")
 
+            capture_mode = str(request.get("capture_mode", "skill_window")).strip().lower()
+            if capture_mode not in {"skill_window", "continuous"}:
+                raise ValueError("capture_mode must be 'skill_window' or 'continuous'")
+            capture_skill = str(
+                request.get("capture_skill", "sonic.sit_chair")
+            ).strip().lower()
+            if capture_mode == "skill_window" and not capture_skill:
+                raise ValueError("capture_skill is required for skill_window mode")
+            pre_roll_s = self._bounded_float(
+                request.get("pre_roll_s", MAX_ACTION_CONTEXT_S),
+                0.0,
+                MAX_ACTION_CONTEXT_S,
+                "pre_roll_s",
+            )
+            post_roll_s = self._bounded_float(
+                request.get("post_roll_s", MAX_ACTION_CONTEXT_S),
+                0.0,
+                MAX_ACTION_CONTEXT_S,
+                "post_roll_s",
+            )
+            target_fps = self._bounded_float(
+                request.get("target_fps", 50.0),
+                1.0,
+                240.0,
+                "target_fps",
+            )
+            smoothing_window = self._bounded_int(
+                request.get("smoothing_window", 5),
+                1,
+                101,
+                "smoothing_window",
+            )
             now_wall = time.time()
             session_name = self._sanitize_name(str(request.get("session_name", "rollout")))
             timestamp = datetime.fromtimestamp(now_wall, tz=timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
             session_id = f"{timestamp}_{session_name}"
-            chair_world_pose = self._normalize_chair_pose(
-                request.get("chair_world_pose"),
-                allow_empty=True,
+            chair_world_pose = (
+                self._normalize_chair_pose(
+                    request.get("chair_world_pose"),
+                    allow_empty=True,
+                )
+                if "chair_world_pose" in request
+                else dict(self._chair_world_pose)
             )
             session_dir = self.output_root / session_id
             suffix = 1
@@ -131,12 +181,26 @@ class RolloutRecorder:
             self._session_dir = session_dir
             self._started_wall_s = now_wall
             self._started_monotonic_s = time.monotonic()
-            self._latest_localization = None
-            self._motion_context = {}
             self._chair_world_pose = chair_world_pose
             self._dropped_samples = 0
             self._last_error = None
-            self._last_export = None
+            self._capture_mode = capture_mode
+            self._capture_skill = capture_skill
+            self._pre_roll_s = pre_roll_s
+            self._post_roll_s = post_roll_s
+            self._capture_started_monotonic_s = None
+            self._capture_finished_monotonic_s = None
+            self._capture_deadline_monotonic_s = None
+            self._capture_complete = False
+            self._auto_started = bool(request.get("auto_started", False))
+            self._auto_export = bool(
+                request.get("auto_export", capture_mode == "skill_window")
+            )
+            self._auto_export_options = {
+                "target_fps": target_fps,
+                "smoothing_window": smoothing_window,
+            }
+            self._cancel_auto_export_timer_locked()
 
             supplied_metadata = request.get("metadata")
             metadata = dict(supplied_metadata) if isinstance(supplied_metadata, Mapping) else {}
@@ -173,6 +237,12 @@ class RolloutRecorder:
                     "external localization only; g1_debug.base_trans_measured is ignored "
                     "because deploy publishes a fixed visualization placeholder"
                 ),
+                "capture_mode": self._capture_mode,
+                "capture_skill": self._capture_skill,
+                "pre_roll_s": self._pre_roll_s,
+                "post_roll_s": self._post_roll_s,
+                "auto_started": self._auto_started,
+                "auto_export": self._auto_export,
             }
             if isinstance(request.get("motion_context"), Mapping):
                 self._motion_context.update(dict(request["motion_context"]))
@@ -187,13 +257,19 @@ class RolloutRecorder:
                 raise RuntimeError("rollout contains no valid 29-DoF g1_debug samples")
 
             target_fps = self._bounded_float(
-                request.get("target_fps", 50.0),
+                request.get(
+                    "target_fps",
+                    self._auto_export_options.get("target_fps", 50.0),
+                ),
                 1.0,
                 240.0,
                 "target_fps",
             )
             smoothing_window = self._bounded_int(
-                request.get("smoothing_window", 5),
+                request.get(
+                    "smoothing_window",
+                    self._auto_export_options.get("smoothing_window", 5),
+                ),
                 1,
                 101,
                 "smoothing_window",
@@ -207,6 +283,8 @@ class RolloutRecorder:
             metadata = dict(self._metadata)
             chair_world_pose = dict(self._chair_world_pose)
             dropped_samples = self._dropped_samples
+            self._cancel_auto_export_timer_locked()
+            self._capture_complete = True
             self._active = False
 
         assert session_id is not None
@@ -231,7 +309,6 @@ class RolloutRecorder:
         with self._lock:
             self._last_export = export_result
             self._samples = []
-            self._latest_localization = None
             self._last_error = None
         return export_result
 
@@ -247,8 +324,6 @@ class RolloutRecorder:
         now_wall = time.time() if received_wall_s is None else float(received_wall_s)
 
         with self._lock:
-            if not self._active:
-                return False
             try:
                 body_q = self._required_vector(
                     payload.get("body_q_measured", payload.get("body_q")),
@@ -295,36 +370,49 @@ class RolloutRecorder:
                 base_xyz_estimated = True
                 localization_timestamp_s = math.nan
 
-            self._samples.append(
-                {
-                    "timestamp_monotonic_s": now_monotonic,
-                    "timestamp_wall_s": now_wall,
-                    "source_index": self._safe_int(payload.get("index"), -1),
-                    "ros_timestamp_s": self._safe_float(payload.get("ros_timestamp"), math.nan),
-                    "body_q": body_q,
-                    "body_dq": body_dq,
-                    "base_quat": base_quat,
-                    "base_ang_vel": base_ang_vel,
-                    "base_xyz": base_xyz,
-                    "base_xyz_valid": base_xyz_valid,
-                    "base_xyz_source": base_xyz_source,
-                    "base_xyz_frame_id": base_xyz_frame_id,
-                    "base_xyz_estimated": base_xyz_estimated,
-                    "localization_timestamp_s": localization_timestamp_s,
-                    "body_q_target": body_q_target,
-                    "policy_action": policy_action,
-                    "motion_name": str(self._motion_context.get("motion_name", "")),
-                    "skill_name": str(self._motion_context.get("skill_name", "")),
-                    "reference_distance_m": self._safe_float(
-                        self._motion_context.get("reference_distance_m"),
-                        math.nan,
-                    ),
-                    "chair_distance_m": self._safe_float(
-                        self._motion_context.get("chair_distance_m"),
-                        math.nan,
-                    ),
-                }
-            )
+            sample = {
+                "timestamp_monotonic_s": now_monotonic,
+                "timestamp_wall_s": now_wall,
+                "source_index": self._safe_int(payload.get("index"), -1),
+                "ros_timestamp_s": self._safe_float(payload.get("ros_timestamp"), math.nan),
+                "body_q": body_q,
+                "body_dq": body_dq,
+                "base_quat": base_quat,
+                "base_ang_vel": base_ang_vel,
+                "base_xyz": base_xyz,
+                "base_xyz_valid": base_xyz_valid,
+                "base_xyz_source": base_xyz_source,
+                "base_xyz_frame_id": base_xyz_frame_id,
+                "base_xyz_estimated": base_xyz_estimated,
+                "localization_timestamp_s": localization_timestamp_s,
+                "body_q_target": body_q_target,
+                "policy_action": policy_action,
+                "motion_name": str(self._motion_context.get("motion_name", "")),
+                "skill_name": str(self._motion_context.get("skill_name", "")),
+                "reference_distance_m": self._safe_float(
+                    self._motion_context.get("reference_distance_m"),
+                    math.nan,
+                ),
+                "chair_distance_m": self._safe_float(
+                    self._motion_context.get("chair_distance_m"),
+                    math.nan,
+                ),
+            }
+            self._append_rolling_sample_locked(sample, now_monotonic)
+            if not self._active:
+                return False
+            if self._capture_mode == "continuous":
+                self._samples.append(sample)
+            elif self._capture_started_monotonic_s is None:
+                return False
+            elif (
+                self._capture_deadline_monotonic_s is None
+                or now_monotonic <= self._capture_deadline_monotonic_s
+            ):
+                self._samples.append(sample)
+            else:
+                self._capture_complete = True
+                return False
             self._last_error = None
             return True
 
@@ -365,6 +453,221 @@ class RolloutRecorder:
             result["motion_context"] = dict(self._motion_context)
             return result
 
+    def begin_action(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        timestamp_monotonic_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Start a bounded action window, auto-arming sit capture when needed."""
+        skill_name = str(payload.get("skill_name", "")).strip().lower()
+        now_monotonic = (
+            time.monotonic()
+            if timestamp_monotonic_s is None
+            else float(timestamp_monotonic_s)
+        )
+        with self._lock:
+            target_skill = self._capture_skill if self._active else "sonic.sit_chair"
+            if skill_name != target_skill:
+                return self.status()
+            if not self._active:
+                self.start(
+                    {
+                        "session_name": f"{skill_name.replace('.', '_')}_auto",
+                        "capture_mode": "skill_window",
+                        "capture_skill": skill_name,
+                        "pre_roll_s": MAX_ACTION_CONTEXT_S,
+                        "post_roll_s": MAX_ACTION_CONTEXT_S,
+                        "auto_started": True,
+                        "auto_export": True,
+                        "episode_id": payload.get("episode_id"),
+                        "motion_context": payload,
+                    }
+                )
+            if self._capture_mode != "skill_window":
+                return self.status()
+            if skill_name != self._capture_skill:
+                return self.status()
+            if self._capture_started_monotonic_s is not None:
+                raise RuntimeError("a rollout action window is already being captured")
+
+            cutoff = now_monotonic - self._pre_roll_s
+            self._samples = [
+                dict(sample)
+                for sample in self._rolling_buffer
+                if cutoff <= sample["timestamp_monotonic_s"] <= now_monotonic
+            ]
+            self._capture_started_monotonic_s = now_monotonic
+            self._capture_finished_monotonic_s = None
+            self._capture_deadline_monotonic_s = None
+            self._capture_complete = False
+            self._metadata.update(
+                {
+                    "capture_action_started_monotonic_s": now_monotonic,
+                    "capture_action_finished_monotonic_s": None,
+                    "capture_deadline_monotonic_s": None,
+                    "capture_prebuffer_sample_count": len(self._samples),
+                    "capture_action_status": "running",
+                }
+            )
+            for key in (
+                "episode_id",
+                "step_id",
+                "motion_name",
+                "reference_distance_m",
+                "chair_distance_m",
+                "tag",
+            ):
+                if key in payload:
+                    self._motion_context[key] = payload[key]
+            self._motion_context["skill_name"] = skill_name
+            return self.status()
+
+    def finish_action(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        timestamp_monotonic_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Mark action completion and schedule export after at most 3 s post-roll."""
+        skill_name = str(payload.get("skill_name", "")).strip().lower()
+        now_monotonic = (
+            time.monotonic()
+            if timestamp_monotonic_s is None
+            else float(timestamp_monotonic_s)
+        )
+        with self._lock:
+            if (
+                not self._active
+                or self._capture_mode != "skill_window"
+                or skill_name != self._capture_skill
+                or self._capture_started_monotonic_s is None
+            ):
+                return self.status()
+            if payload.get("motion_commanded") is False:
+                self._cancel_auto_export_timer_locked()
+                self._capture_complete = True
+                self._active = False
+                self._samples = []
+                skipped = {
+                    "ok": True,
+                    "error_message": None,
+                    "session_id": self._session_id,
+                    "session_dir": (
+                        str(self._session_dir)
+                        if self._session_dir is not None
+                        else None
+                    ),
+                    "sample_count": 0,
+                    "export_status": "skipped_no_motion_commanded",
+                    "action_status": str(payload.get("action_status", "rejected")),
+                }
+                self._last_export = skipped
+                if self._session_dir is not None:
+                    self._atomic_write_json(
+                        self._session_dir / "manifest.json",
+                        skipped,
+                    )
+                return self.status()
+            now_monotonic = max(
+                now_monotonic,
+                self._capture_started_monotonic_s,
+            )
+            expected_duration_s = self._optional_finite_float(
+                payload.get("duration_s")
+            )
+            if expected_duration_s is not None and expected_duration_s > 0.0:
+                action_finished_monotonic_s = now_monotonic + expected_duration_s
+                action_duration_source = "executed_arguments.duration_s_after_dispatch"
+            else:
+                action_finished_monotonic_s = now_monotonic
+                action_duration_source = "execute_action_return"
+            self._capture_finished_monotonic_s = action_finished_monotonic_s
+            self._capture_deadline_monotonic_s = (
+                action_finished_monotonic_s + self._post_roll_s
+            )
+            self._capture_complete = (
+                self._capture_deadline_monotonic_s <= time.monotonic()
+            )
+            self._metadata.update(
+                {
+                    "capture_action_dispatch_return_monotonic_s": now_monotonic,
+                    "capture_action_finished_monotonic_s": (
+                        action_finished_monotonic_s
+                    ),
+                    "capture_action_duration_source": action_duration_source,
+                    "capture_expected_duration_s": expected_duration_s,
+                    "capture_deadline_monotonic_s": self._capture_deadline_monotonic_s,
+                    "capture_action_status": str(
+                        payload.get("action_status", "completed")
+                    ),
+                    "capture_motion_commanded": payload.get("motion_commanded"),
+                    "capture_final_motion_context": dict(self._motion_context),
+                }
+            )
+            self._cancel_auto_export_timer_locked()
+            if self._auto_export:
+                session_id = self._session_id
+                auto_export_delay_s = max(
+                    0.0,
+                    self._capture_deadline_monotonic_s - time.monotonic(),
+                )
+                timer = threading.Timer(
+                    auto_export_delay_s,
+                    self._auto_finalize,
+                    args=(session_id,),
+                )
+                timer.daemon = True
+                self._auto_export_timer = timer
+                timer.start()
+            return self.status()
+
+    def mark_action_dispatched(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        timestamp_monotonic_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Rebase the window to the actual reference-dispatch time."""
+        skill_name = str(payload.get("skill_name", "")).strip().lower()
+        now_monotonic = (
+            time.monotonic()
+            if timestamp_monotonic_s is None
+            else float(timestamp_monotonic_s)
+        )
+        with self._lock:
+            if (
+                not self._active
+                or self._capture_mode != "skill_window"
+                or skill_name != self._capture_skill
+                or self._capture_started_monotonic_s is None
+                or self._capture_finished_monotonic_s is not None
+            ):
+                return self.status()
+            cutoff = now_monotonic - self._pre_roll_s
+            self._samples = [
+                dict(sample)
+                for sample in self._rolling_buffer
+                if cutoff <= sample["timestamp_monotonic_s"] <= now_monotonic
+            ]
+            self._capture_started_monotonic_s = now_monotonic
+            self._metadata.update(
+                {
+                    "capture_action_started_monotonic_s": now_monotonic,
+                    "capture_start_source": "reference_dispatch",
+                    "capture_prebuffer_sample_count": len(self._samples),
+                }
+            )
+            for key in (
+                "motion_name",
+                "reference_distance_m",
+                "chair_distance_m",
+                "tag",
+            ):
+                if key in payload:
+                    self._motion_context[key] = payload[key]
+            return self.status()
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             now_monotonic = time.monotonic()
@@ -375,6 +678,7 @@ class RolloutRecorder:
                 "session_id": self._session_id,
                 "session_dir": str(self._session_dir) if self._session_dir is not None else None,
                 "sample_count": len(self._samples),
+                "prebuffer_sample_count": len(self._rolling_buffer),
                 "dropped_sample_count": self._dropped_samples,
                 "elapsed_s": (
                     now_monotonic - self._started_monotonic_s
@@ -384,6 +688,41 @@ class RolloutRecorder:
                 "localization": self._localization_status(self._latest_localization, now_monotonic),
                 "motion_context": dict(self._motion_context),
                 "chair_world_pose": self._json_safe_pose(self._chair_world_pose),
+                "capture": {
+                    "mode": self._capture_mode,
+                    "skill": self._capture_skill,
+                    "pre_roll_s": self._pre_roll_s,
+                    "post_roll_s": self._post_roll_s,
+                    "action_started": self._capture_started_monotonic_s is not None,
+                    "action_finished": (
+                        self._capture_finished_monotonic_s is not None
+                        and now_monotonic >= self._capture_finished_monotonic_s
+                    ),
+                    "action_remaining_s": (
+                        max(
+                            0.0,
+                            self._capture_finished_monotonic_s - now_monotonic,
+                        )
+                        if self._capture_finished_monotonic_s is not None
+                        else None
+                    ),
+                    "complete": self._capture_complete,
+                    "auto_started": self._auto_started,
+                    "auto_export": self._auto_export,
+                    "post_remaining_s": (
+                        max(
+                            0.0,
+                            self._capture_deadline_monotonic_s
+                            - max(
+                                now_monotonic,
+                                self._capture_finished_monotonic_s
+                                or now_monotonic,
+                            ),
+                        )
+                        if self._capture_deadline_monotonic_s is not None
+                        else None
+                    ),
+                },
                 "last_export": self._last_export,
             }
 
@@ -403,6 +742,7 @@ class RolloutRecorder:
         else:
             error_message = "bridge closed before any valid g1_debug sample was recorded"
         with self._lock:
+            self._cancel_auto_export_timer_locked()
             self._active = False
             self._last_error = error_message
         if session_dir is not None:
@@ -442,6 +782,36 @@ class RolloutRecorder:
                 "age_s": max(0.0, now_monotonic - sample.received_monotonic_s),
             }
 
+    def _append_rolling_sample_locked(
+        self,
+        sample: dict[str, Any],
+        now_monotonic_s: float,
+    ) -> None:
+        self._rolling_buffer.append(sample)
+        cutoff = now_monotonic_s - MAX_ACTION_CONTEXT_S
+        self._rolling_buffer = [
+            buffered
+            for buffered in self._rolling_buffer
+            if buffered["timestamp_monotonic_s"] >= cutoff
+        ]
+
+    def _auto_finalize(self, session_id: str | None) -> None:
+        with self._lock:
+            if not self._active or self._session_id != session_id:
+                return
+            self._capture_complete = True
+            options = dict(self._auto_export_options)
+        try:
+            self.stop(options)
+        except Exception as exc:  # noqa: BLE001 - surface through rollout status.
+            with self._lock:
+                self._last_error = f"automatic rollout export failed: {exc}"
+
+    def _cancel_auto_export_timer_locked(self) -> None:
+        if self._auto_export_timer is not None:
+            self._auto_export_timer.cancel()
+            self._auto_export_timer = None
+
     def _export(
         self,
         *,
@@ -463,6 +833,27 @@ class RolloutRecorder:
         base_xyz_valid = np.asarray([sample["base_xyz_valid"] for sample in samples], dtype=np.bool_)
         body_q_target = np.asarray([sample["body_q_target"] for sample in samples], dtype=np.float32)
         policy_action = np.asarray([sample["policy_action"] for sample in samples], dtype=np.float32)
+        action_started_s = self._optional_finite_float(
+            metadata.get("capture_action_started_monotonic_s")
+        )
+        action_finished_s = self._optional_finite_float(
+            metadata.get("capture_action_finished_monotonic_s")
+        )
+        capture_phase = self._capture_phases(
+            monotonic_s,
+            action_started_s,
+            action_finished_s,
+        )
+        recorded_pre_roll_s = (
+            max(0.0, action_started_s - float(monotonic_s[0]))
+            if action_started_s is not None
+            else 0.0
+        )
+        recorded_post_roll_s = (
+            max(0.0, float(monotonic_s[-1]) - action_finished_s)
+            if action_finished_s is not None
+            else 0.0
+        )
 
         metadata.update(
             {
@@ -474,6 +865,18 @@ class RolloutRecorder:
                 "base_xyz_valid_samples": int(base_xyz_valid.sum()),
                 "base_xyz_all_valid": bool(base_xyz_valid.all()),
                 "chair_world_pose": self._json_safe_pose(chair_world_pose),
+                "capture_action_start_offset_s": (
+                    action_started_s - float(monotonic_s[0])
+                    if action_started_s is not None
+                    else None
+                ),
+                "capture_action_end_offset_s": (
+                    action_finished_s - float(monotonic_s[0])
+                    if action_finished_s is not None
+                    else None
+                ),
+                "recorded_pre_roll_s": recorded_pre_roll_s,
+                "recorded_post_roll_s": recorded_post_roll_s,
             }
         )
         metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
@@ -507,6 +910,7 @@ class RolloutRecorder:
             ),
             body_q_target=body_q_target,
             policy_action=policy_action,
+            capture_phase=capture_phase,
             motion_name=np.asarray([sample["motion_name"] for sample in samples], dtype=np.str_),
             skill_name=np.asarray([sample["skill_name"] for sample in samples], dtype=np.str_),
             reference_distance_m=np.asarray(
@@ -556,6 +960,7 @@ class RolloutRecorder:
             ),
             root_quat_wxyz=base_quat,
             joint_pos=body_q,
+            capture_phase=capture_phase,
             joint_order=np.asarray(G1_JOINT_ORDER, dtype=np.str_),
             spatial_replay_ready=np.asarray(spatial_replay_ready, dtype=np.bool_),
             chair_relative_replay_ready=np.asarray(
@@ -580,6 +985,11 @@ class RolloutRecorder:
             base_xyz,
             base_xyz_valid,
             target_s,
+        )
+        reference_capture_phase = self._capture_phases(
+            target_s + monotonic_s[0],
+            action_started_s,
+            action_finished_s,
         )
 
         reference_metadata = {
@@ -606,6 +1016,7 @@ class RolloutRecorder:
             root_pos_valid=reference_root_valid,
             frame_index=np.arange(len(target_s), dtype=np.int64),
             timestamp_s=target_s,
+            capture_phase=reference_capture_phase,
             encode_mode=np.asarray(0, dtype=np.int32),
             motion_id=np.asarray(-1, dtype=np.int32),
             joint_order=np.asarray(G1_JOINT_ORDER, dtype=np.str_),
@@ -642,6 +1053,12 @@ class RolloutRecorder:
             "base_world_frame_id": base_frame_id or None,
             "base_xyz_valid_samples": int(base_xyz_valid.sum()),
             "base_xyz_total_samples": len(samples),
+            "capture_phase_sample_count": {
+                phase: int(np.count_nonzero(capture_phase == phase))
+                for phase in ("pre", "action", "post", "continuous")
+            },
+            "recorded_pre_roll_s": recorded_pre_roll_s,
+            "recorded_post_roll_s": recorded_post_roll_s,
             "gear_sonic_reference_status": "candidate_requires_physical_validation",
             "warnings": export_warnings,
         }
@@ -891,6 +1308,20 @@ class RolloutRecorder:
         return float(1.0 / np.median(deltas))
 
     @staticmethod
+    def _capture_phases(
+        timestamps: np.ndarray,
+        action_started_s: float | None,
+        action_finished_s: float | None,
+    ) -> np.ndarray:
+        if action_started_s is None:
+            return np.full(len(timestamps), "continuous", dtype="<U10")
+        phases = np.full(len(timestamps), "action", dtype="<U10")
+        phases[timestamps < action_started_s] = "pre"
+        if action_finished_s is not None:
+            phases[timestamps > action_finished_s] = "post"
+        return phases
+
+    @staticmethod
     def _export_warnings(
         base_xyz_valid: np.ndarray,
         base_frame_ids: set[str],
@@ -964,6 +1395,14 @@ class RolloutRecorder:
         except (TypeError, ValueError):
             return default
         return result if math.isfinite(result) else default
+
+    @staticmethod
+    def _optional_finite_float(value: Any) -> float | None:
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return None
+        return result if math.isfinite(result) else None
 
     @staticmethod
     def _safe_int(value: Any, default: int) -> int:

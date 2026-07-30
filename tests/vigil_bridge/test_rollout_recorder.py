@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
-from gear_sonic.vigil_bridge.rollout_recorder import G1_JOINT_ORDER, RolloutRecorder
 from gear_sonic.vigil_bridge.mujoco_adapter import (
     MujocoBridgeConfig,
     MujocoRobotState,
     MujocoRuntimeClient,
 )
+from gear_sonic.vigil_bridge.primitive_executor import DryRunPrimitiveExecutor
 from gear_sonic.vigil_bridge.real_adapter import RealBridgeConfig, RealRuntimeClient
+from gear_sonic.vigil_bridge.rollout_recorder import G1_JOINT_ORDER, RolloutRecorder
 from gear_sonic.vigil_bridge.service import VigilBridgeService
 from gear_sonic.vigil_bridge.transport import BridgeRequestRouter
 
@@ -38,6 +40,7 @@ def test_rollout_recorder_exports_raw_3dgs_and_reference(tmp_path) -> None:
     start = recorder.start(
         {
             "session_name": "chair_run",
+            "capture_mode": "continuous",
             "checkpoint": "checkpoint.pt",
             "chair_world_pose": {
                 "position_xyz": [2.0, 1.0, 0.0],
@@ -112,7 +115,7 @@ def test_rollout_recorder_exports_raw_3dgs_and_reference(tmp_path) -> None:
 
 def test_missing_external_localization_stays_invalid_and_nan(tmp_path) -> None:
     recorder = RolloutRecorder(tmp_path, runtime_mode="real")
-    recorder.start({"session_name": "no_odom"})
+    recorder.start({"session_name": "no_odom", "capture_mode": "continuous"})
     assert recorder.record_g1_debug(_g1_debug_sample(1, 0.0))
 
     result = recorder.stop()
@@ -124,6 +127,223 @@ def test_missing_external_localization_stays_invalid_and_nan(tmp_path) -> None:
         assert raw["base_xyz_source"][0] == "none"
 
 
+def test_sit_window_keeps_only_three_seconds_before_and_after(tmp_path) -> None:
+    recorder = RolloutRecorder(tmp_path, runtime_mode="real")
+    base_monotonic = time.monotonic()
+
+    for index in range(5):
+        assert not recorder.record_g1_debug(
+            _g1_debug_sample(index, float(index)),
+            received_monotonic_s=base_monotonic + index,
+        )
+
+    recorder.start(
+        {
+            "session_name": "bounded_sit",
+            "capture_mode": "skill_window",
+            "capture_skill": "sonic.sit_chair",
+            "pre_roll_s": 3.0,
+            "post_roll_s": 3.0,
+            "auto_export": False,
+        }
+    )
+    recorder.begin_action(
+        {"skill_name": "sonic.sit_chair"},
+        timestamp_monotonic_s=base_monotonic + 5.0,
+    )
+    for index in range(5, 8):
+        assert recorder.record_g1_debug(
+            _g1_debug_sample(index, float(index)),
+            received_monotonic_s=base_monotonic + index,
+        )
+    recorder.finish_action(
+        {
+            "skill_name": "sonic.sit_chair",
+            "action_status": "completed",
+            "motion_commanded": True,
+        },
+        timestamp_monotonic_s=base_monotonic + 7.0,
+    )
+    for index in range(8, 12):
+        recorded = recorder.record_g1_debug(
+            _g1_debug_sample(index, float(index)),
+            received_monotonic_s=base_monotonic + index,
+        )
+        assert recorded is (index <= 10)
+
+    result = recorder.stop()
+
+    assert result["recorded_pre_roll_s"] == pytest.approx(3.0)
+    assert result["recorded_post_roll_s"] == pytest.approx(3.0)
+    with np.load(result["raw_real_rollout"], allow_pickle=False) as raw:
+        assert raw["source_index"].tolist() == list(range(2, 11))
+        assert raw["capture_phase"].tolist() == (
+            ["pre"] * 3 + ["action"] * 3 + ["post"] * 3
+        )
+
+
+def test_sit_window_auto_exports_after_post_roll(tmp_path) -> None:
+    recorder = RolloutRecorder(tmp_path, runtime_mode="real")
+    recorder.start(
+        {
+            "session_name": "auto_export",
+            "capture_mode": "skill_window",
+            "pre_roll_s": 0.05,
+            "post_roll_s": 0.05,
+            "auto_export": True,
+        }
+    )
+    recorder.record_g1_debug(_g1_debug_sample(0, 0.0))
+    recorder.begin_action({"skill_name": "sonic.sit_chair"})
+    recorder.record_g1_debug(_g1_debug_sample(1, 1.0))
+    recorder.finish_action(
+        {
+            "skill_name": "sonic.sit_chair",
+            "action_status": "completed",
+            "motion_commanded": True,
+        }
+    )
+    time.sleep(0.02)
+    recorder.record_g1_debug(_g1_debug_sample(2, 2.0))
+    time.sleep(0.08)
+
+    status = recorder.status()
+
+    assert status["active"] is False
+    assert status["last_export"]["ok"] is True
+    assert status["last_export"]["recorded_pre_roll_s"] <= 0.05
+    assert status["last_export"]["recorded_post_roll_s"] <= 0.05
+
+
+def test_reference_dispatch_rebases_pre_roll_window(tmp_path) -> None:
+    recorder = RolloutRecorder(tmp_path, runtime_mode="real")
+    base_monotonic = time.monotonic()
+    for index in range(6):
+        recorder.record_g1_debug(
+            _g1_debug_sample(index, float(index)),
+            received_monotonic_s=base_monotonic + index,
+        )
+    recorder.start(
+        {
+            "capture_mode": "skill_window",
+            "pre_roll_s": 3.0,
+            "post_roll_s": 0.0,
+            "auto_export": False,
+        }
+    )
+    recorder.begin_action(
+        {"skill_name": "sonic.sit_chair"},
+        timestamp_monotonic_s=base_monotonic + 5.0,
+    )
+    recorder.record_g1_debug(
+        _g1_debug_sample(6, 6.0),
+        received_monotonic_s=base_monotonic + 6.0,
+    )
+    recorder.mark_action_dispatched(
+        {"skill_name": "sonic.sit_chair"},
+        timestamp_monotonic_s=base_monotonic + 7.0,
+    )
+    recorder.record_g1_debug(
+        _g1_debug_sample(7, 7.0),
+        received_monotonic_s=base_monotonic + 7.0,
+    )
+    recorder.finish_action(
+        {
+            "skill_name": "sonic.sit_chair",
+            "motion_commanded": True,
+        },
+        timestamp_monotonic_s=base_monotonic + 7.0,
+    )
+    result = recorder.stop()
+
+    with np.load(result["raw_real_rollout"], allow_pickle=False) as raw:
+        assert raw["source_index"].tolist() == [4, 5, 6, 7]
+        assert raw["capture_phase"].tolist() == [
+            "pre",
+            "pre",
+            "pre",
+            "action",
+        ]
+
+
+def test_service_auto_arms_sit_window_without_rollout_start(tmp_path) -> None:
+    recorder = RolloutRecorder(tmp_path, runtime_mode="real")
+    recorder.record_g1_debug(_g1_debug_sample(0, 0.0))
+
+    class SitExecutor(DryRunPrimitiveExecutor):
+        def execute_action(self, skill_name, arguments, safety):
+            recorder.record_g1_debug(_g1_debug_sample(1, 1.0))
+            return {
+                "ok": True,
+                "error_message": None,
+                "action_status": "completed",
+                "executed_arguments": {
+                    "motion_name": "sit_060cm",
+                    "reference_distance_m": 0.6,
+                    "duration_s": 0.05,
+                },
+                "telemetry": {
+                    "completion": {
+                        "motion_commanded": True,
+                    }
+                },
+            }
+
+    service = VigilBridgeService(
+        executor=SitExecutor(runtime_mode="real"),
+        rollout_recorder=recorder,
+        runtime_mode="real",
+    )
+    response = service.execute_action(
+        {
+            "episode_id": "sit_auto",
+            "step_id": 3,
+            "runtime_mode": "real",
+            "skill_name": "sonic.sit_chair",
+            "arguments": {"chair_distance_m": 0.61},
+            "safety": {},
+        }
+    )
+    recorder.record_g1_debug(_g1_debug_sample(2, 2.0))
+    assert recorder.status()["capture"]["action_finished"] is False
+    time.sleep(0.06)
+    recorder.record_g1_debug(_g1_debug_sample(3, 3.0))
+    result = recorder.stop()
+
+    assert response["ok"] is True
+    assert result["ok"] is True
+    with np.load(result["raw_real_rollout"], allow_pickle=False) as raw:
+        assert raw["source_index"].tolist() == [0, 1, 2, 3]
+        assert raw["capture_phase"].tolist() == [
+            "pre",
+            "action",
+            "action",
+            "post",
+        ]
+
+
+def test_rejected_sit_does_not_export_pose_files(tmp_path) -> None:
+    recorder = RolloutRecorder(tmp_path, runtime_mode="real")
+    recorder.record_g1_debug(_g1_debug_sample(0, 0.0))
+    recorder.begin_action({"skill_name": "sonic.sit_chair"})
+
+    status = recorder.finish_action(
+        {
+            "skill_name": "sonic.sit_chair",
+            "action_status": "rejected",
+            "motion_commanded": False,
+        }
+    )
+
+    assert status["active"] is False
+    assert status["last_export"]["export_status"] == "skipped_no_motion_commanded"
+    session_dir = Path(status["session_dir"])
+    assert (session_dir / "manifest.json").exists()
+    assert not (session_dir / "raw_real_rollout.npz").exists()
+    assert not (session_dir / "3dgs_replay.npz").exists()
+    assert not (session_dir / "gear_sonic_reference.npz").exists()
+
+
 def test_router_exposes_rollout_lifecycle(tmp_path) -> None:
     recorder = RolloutRecorder(tmp_path, runtime_mode="real")
     router = BridgeRequestRouter(
@@ -133,7 +353,10 @@ def test_router_exposes_rollout_lifecycle(tmp_path) -> None:
         )
     )
 
-    start = router.dispatch("rollout/start", {"session_name": "router"})
+    start = router.dispatch(
+        "rollout/start",
+        {"session_name": "router", "capture_mode": "continuous"},
+    )
     localization = router.dispatch(
         "rollout/localization",
         {
