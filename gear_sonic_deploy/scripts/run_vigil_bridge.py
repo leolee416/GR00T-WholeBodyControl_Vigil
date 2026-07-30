@@ -50,6 +50,17 @@ def main() -> None:
     parser.add_argument("--state-host", default="localhost", help="Runtime g1_debug state ZMQ host.")
     parser.add_argument("--state-port", type=int, default=5557, help="Runtime g1_debug state ZMQ port.")
     parser.add_argument("--state-topic", default="g1_debug", help="Runtime state topic published by deploy.")
+    parser.add_argument(
+        "--rollout-output-dir",
+        default="outputs/vigil_rollouts",
+        help="Directory for bridge rollout sessions and NPZ exports.",
+    )
+    parser.add_argument(
+        "--rollout-localization-max-age",
+        type=float,
+        default=0.5,
+        help="Maximum age in seconds for externally supplied base_xyz localization.",
+    )
     parser.add_argument("--rate", type=float, default=20.0, help="Planner command publish rate.")
     parser.add_argument("--move-speed", type=float, default=0.25, help="Default move speed in m/s.")
     parser.add_argument("--min-move-speed", type=float, default=0.20, help="Minimum move speed in m/s.")
@@ -209,6 +220,8 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
                 auto_start_control=args.auto_start_control,
                 stop_on_halt=args.send_stop_on_halt,
                 chair_motion_catalog=args.chair_motion_catalog,
+                rollout_output_dir=args.rollout_output_dir,
+                rollout_localization_max_age_s=args.rollout_localization_max_age,
                 verbose=args.verbose,
             )
         )
@@ -244,6 +257,9 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
                 motion_enabled=args.enable_real_motion,
                 auto_start_control=args.auto_start_control,
                 stop_on_halt=args.send_stop_on_halt,
+                chair_motion_catalog=args.chair_motion_catalog,
+                rollout_output_dir=args.rollout_output_dir,
+                rollout_localization_max_age_s=args.rollout_localization_max_age,
                 verbose=args.verbose,
             )
         )

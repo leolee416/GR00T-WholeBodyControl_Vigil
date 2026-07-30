@@ -46,6 +46,7 @@ from gear_sonic.vigil_bridge.protocol import (
     RobotStateResponse,
     RuntimeHealth,
 )
+from gear_sonic.vigil_bridge.rollout_recorder import G1_JOINT_ORDER, RolloutRecorder
 from gear_sonic.vigil_bridge.service import VigilBridgeService
 
 
@@ -90,14 +91,21 @@ class RealBridgeConfig:
     auto_start_control: bool = False
     stop_on_halt: bool = False
     chair_motion_catalog: str | None = None
+    rollout_output_dir: str = "outputs/vigil_rollouts"
+    rollout_localization_max_age_s: float = 0.5
     verbose: bool = False
 
 
 class RealRuntimeClient:
     """Runtime client shared by the real executor and sensor provider."""
 
-    def __init__(self, config: RealBridgeConfig) -> None:
+    def __init__(
+        self,
+        config: RealBridgeConfig,
+        rollout_recorder: RolloutRecorder | None = None,
+    ) -> None:
         self.config = config
+        self.rollout_recorder = rollout_recorder
         self.started = False
         self.paused = False
         self._startup_error: str | None = None
@@ -124,6 +132,9 @@ class RealRuntimeClient:
                     self.config.state_port,
                     self.config.state_topic,
                 )
+                set_callback = getattr(self._state_sub, "set_sample_callback", None)
+                if callable(set_callback) and self.rollout_recorder is not None:
+                    set_callback(self._record_rollout_sample)
                 self._state_sub.start()
             if self.config.camera_enabled and self._image_sub is None:
                 self._image_sub = ZMQImageSubscriber(
@@ -233,6 +244,8 @@ class RealRuntimeClient:
         frames = payload.get("frames")
         if not isinstance(frames, Mapping):
             raise ValueError("reference motion payload requires frames")
+        if self.rollout_recorder is not None:
+            self.rollout_recorder.set_motion_context(payload)
         deadline = time.monotonic() + max(0.20, self.config.startup_command_burst_s)
         period_s = max(self.config.startup_command_period_s, 0.01)
         while True:
@@ -398,22 +411,56 @@ class RealRuntimeClient:
             return None
         self._ensure_yaw_origin(state)
         now = time.monotonic()
+        localization = (
+            self.rollout_recorder.latest_localization()
+            if self.rollout_recorder is not None
+            else None
+        )
+        base_xyz = localization["base_xyz"] if localization is not None else [None, None, None]
         return {
             "state_id": f"real_state_{int(now * 1000)}",
             "base_pose": {
-                "x_m": None,
-                "y_m": None,
-                "z_m": None,
+                "x_m": base_xyz[0],
+                "y_m": base_xyz[1],
+                "z_m": base_xyz[2],
                 "yaw_deg": math.degrees(self._relative_yaw(state)),
+                "frame_id": localization["frame_id"] if localization is not None else None,
+                "translation_valid": localization is not None,
             },
             "base_velocity": {
                 "linear_mps": None,
                 "angular_rad_s": [None, None, state.yaw_rate],
                 "angular_deg_s": [None, None, math.degrees(state.yaw_rate)] if state.yaw_rate is not None else None,
             },
-            "joint_positions": {},
-            "estimated": True,
-            "source": "g1_debug_heading",
+            "joint_positions": (
+                dict(zip(G1_JOINT_ORDER, state.body_q, strict=True))
+                if state.body_q is not None
+                else {}
+            ),
+            "joint_velocities": (
+                dict(zip(G1_JOINT_ORDER, state.body_dq, strict=True))
+                if state.body_dq is not None
+                else {}
+            ),
+            "joint_targets": (
+                dict(zip(G1_JOINT_ORDER, state.body_q_target, strict=True))
+                if state.body_q_target is not None
+                else {}
+            ),
+            "policy_action": (
+                dict(zip(G1_JOINT_ORDER, state.policy_action, strict=True))
+                if state.policy_action is not None
+                else {}
+            ),
+            "joint_order": list(G1_JOINT_ORDER),
+            "estimated": (
+                bool(localization["estimated"]) if localization is not None else True
+            ),
+            "source": (
+                f"{localization['source']}+g1_debug"
+                if localization is not None
+                else "g1_debug_heading"
+            ),
             "heading_state": {
                 "base_quat_wxyz": state.base_quat,
                 "delta_heading_rad": state.delta_heading,
@@ -421,6 +468,20 @@ class RealRuntimeClient:
                 "age_s": now - state.timestamp,
             },
         }
+
+    def _record_rollout_sample(
+        self,
+        payload: Mapping[str, Any],
+        received_monotonic_s: float,
+        received_wall_s: float,
+    ) -> None:
+        if self.rollout_recorder is None:
+            return
+        self.rollout_recorder.record_g1_debug(
+            payload,
+            received_monotonic_s=received_monotonic_s,
+            received_wall_s=received_wall_s,
+        )
 
     def get_health(self) -> RuntimeHealth:
         state_connected = self.latest_state() is not None
@@ -1053,11 +1114,17 @@ def create_real_bridge_service(config: RealBridgeConfig | None = None) -> VigilB
     """Create a bridge service backed by the real-robot runtime adapter."""
 
     bridge_config = config or RealBridgeConfig()
-    runtime = RealRuntimeClient(bridge_config)
+    rollout_recorder = RolloutRecorder(
+        output_root=bridge_config.rollout_output_dir,
+        runtime_mode=bridge_config.runtime_mode,
+        localization_max_age_s=bridge_config.rollout_localization_max_age_s,
+    )
+    runtime = RealRuntimeClient(bridge_config, rollout_recorder=rollout_recorder)
     executor = RealPrimitiveExecutor(config=bridge_config, runtime=runtime)
     sensor_provider = RealSensorProvider(runtime=runtime, runtime_mode=bridge_config.runtime_mode)
     return VigilBridgeService(
         executor=executor,
         sensor_provider=sensor_provider,
+        rollout_recorder=rollout_recorder,
         runtime_mode=bridge_config.runtime_mode,
     )

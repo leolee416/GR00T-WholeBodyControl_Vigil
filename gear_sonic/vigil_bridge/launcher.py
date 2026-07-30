@@ -77,6 +77,17 @@ def _build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--state-port", type=int, default=5557, help="Bridge ZMQ state port.")
     start_parser.add_argument("--state-topic", default="g1_debug", help="Bridge ZMQ state topic.")
     start_parser.add_argument("--state-timeout", type=float, default=10.0, help="Seconds bridge waits for g1_debug state.")
+    start_parser.add_argument(
+        "--rollout-output-dir",
+        default="outputs/vigil_rollouts",
+        help="Directory for measured rollout sessions and NPZ exports.",
+    )
+    start_parser.add_argument(
+        "--rollout-localization-max-age",
+        type=float,
+        default=0.5,
+        help="Maximum external base localization age in seconds.",
+    )
     start_parser.add_argument("--max-speed-mps", type=float, default=2.0, help="Maximum real-robot move speed threshold in m/s.")
     start_parser.add_argument("--move-model-file", default="auto", help="Move model JSON path, or 'auto' for latest output.")
     start_parser.add_argument("--disable-move-model", action="store_true", help="Use direct open-loop move instead of move_model.")
@@ -421,6 +432,10 @@ def _bridge_script(args: argparse.Namespace, policy_log: Path, bridge_log: Path)
         args.state_topic,
         "--state-timeout",
         str(args.state_timeout),
+        "--rollout-output-dir",
+        args.rollout_output_dir,
+        "--rollout-localization-max-age",
+        str(args.rollout_localization_max_age),
         "--max-speed-mps",
         str(args.max_speed_mps),
         "--move-model-file",

@@ -23,6 +23,7 @@ from gear_sonic.vigil_bridge.protocol import (
     SUPPORTED_ACTIONS,
     SUPPORTED_OBSERVATIONS,
 )
+from gear_sonic.vigil_bridge.rollout_recorder import RolloutRecorder
 from gear_sonic.vigil_bridge.sensors import FakeSensorProvider
 
 
@@ -33,6 +34,7 @@ class VigilBridgeService:
     executor: DryRunPrimitiveExecutor | None = None
     sensor_provider: FakeSensorProvider | None = None
     audio_manager: AudioSessionManager | None = None
+    rollout_recorder: RolloutRecorder | None = None
     audio_advertise_always: bool = False
     runtime_mode: str = "dry_run"
     _closed: bool = False
@@ -52,6 +54,17 @@ class VigilBridgeService:
         }
         if self._should_advertise_audio(payload):
             capabilities["audio"] = self._audio_capabilities()
+        if self.rollout_recorder is not None:
+            capabilities["rollout_recording"] = {
+                "source": "g1_debug",
+                "measured_joints": 29,
+                "external_base_localization": True,
+                "exports": [
+                    "raw_real_rollout.npz",
+                    "3dgs_replay.npz",
+                    "gear_sonic_reference.npz",
+                ],
+            }
         return {
             "ok": True,
             "error_message": None,
@@ -98,6 +111,7 @@ class VigilBridgeService:
 
         before_response = self.sensor_provider.get_robot_state()
         robot_state_before = dict(before_response.get("robot_state", {}))
+        self._update_rollout_action_context(payload)
         try:
             action_response = self.executor.execute_action(
                 skill_name=str(payload.get("skill_name", "")),
@@ -132,6 +146,12 @@ class VigilBridgeService:
         executed_arguments = dict(action_response.get("executed_arguments", {}))
         if executed_arguments:
             executed_arguments.setdefault("skill_name", str(payload.get("skill_name", "")))
+            self._update_rollout_action_context(
+                {
+                    **dict(payload),
+                    "arguments": executed_arguments,
+                }
+            )
         telemetry = {
             "bridge": "groot_vigil_bridge",
             "phase": self._bridge_phase(),
@@ -193,8 +213,47 @@ class VigilBridgeService:
             return resume()
         return self.executor.start()
 
+    def start_rollout(self, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        if self.rollout_recorder is None:
+            return self._rollout_unavailable()
+        try:
+            return self.rollout_recorder.start(payload)
+        except Exception as exc:
+            return {"ok": False, "error_message": str(exc), "active": self.rollout_recorder.active}
+
+    def stop_rollout(self, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        if self.rollout_recorder is None:
+            return self._rollout_unavailable()
+        try:
+            return self.rollout_recorder.stop(payload)
+        except Exception as exc:
+            return {"ok": False, "error_message": str(exc), "active": self.rollout_recorder.active}
+
+    def get_rollout_status(self) -> dict[str, Any]:
+        if self.rollout_recorder is None:
+            return self._rollout_unavailable()
+        return self.rollout_recorder.status()
+
+    def update_rollout_localization(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        if self.rollout_recorder is None:
+            return self._rollout_unavailable()
+        try:
+            return self.rollout_recorder.update_localization(payload)
+        except Exception as exc:
+            return {"ok": False, "error_message": str(exc), "active": self.rollout_recorder.active}
+
+    def update_rollout_context(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        if self.rollout_recorder is None:
+            return self._rollout_unavailable()
+        try:
+            return self.rollout_recorder.set_motion_context(payload)
+        except Exception as exc:
+            return {"ok": False, "error_message": str(exc), "active": self.rollout_recorder.active}
+
     def close(self) -> None:
         if not self._closed:
+            if self.rollout_recorder is not None:
+                self.rollout_recorder.close()
             if self.audio_manager is not None:
                 self.audio_manager.close()
             assert self.executor is not None
@@ -262,6 +321,31 @@ class VigilBridgeService:
             return dict(AUDIO_CAPABILITIES)
         return self.audio_manager.capabilities()
 
+    def _update_rollout_action_context(self, payload: Mapping[str, Any]) -> None:
+        if self.rollout_recorder is None:
+            return
+        arguments = self._mapping_or_empty(payload.get("arguments"))
+        context: dict[str, Any] = {
+            "skill_name": str(payload.get("skill_name", "")),
+        }
+        for key in (
+            "episode_id",
+            "step_id",
+            "motion_name",
+            "reference_distance_m",
+            "chair_distance_m",
+            "tag",
+        ):
+            if key in payload:
+                context[key] = payload[key]
+            elif key in arguments:
+                context[key] = arguments[key]
+        try:
+            self.rollout_recorder.set_motion_context(context)
+        except (TypeError, ValueError):
+            # Recording metadata must never break execution or trigger robot halt.
+            return
+
     def _should_advertise_audio(self, payload: Mapping[str, Any]) -> bool:
         if self.audio_advertise_always:
             return True
@@ -278,6 +362,14 @@ class VigilBridgeService:
             "telemetry": {
                 "audio": dict(AUDIO_CAPABILITIES),
             },
+        }
+
+    @staticmethod
+    def _rollout_unavailable() -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error_message": "rollout recorder is not configured for this backend",
+            "active": False,
         }
 
     def _reset_error(self, error_message: str) -> ResetEpisodeResponse:

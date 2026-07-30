@@ -47,6 +47,16 @@ class BridgeRequestRouter:
             return self.service.pause()
         if route == "resume":
             return self.service.resume()
+        if route == "rollout/start":
+            return self.service.start_rollout(request_payload)
+        if route == "rollout/stop":
+            return self.service.stop_rollout(request_payload)
+        if route == "rollout/status":
+            return self.service.get_rollout_status()
+        if route == "rollout/localization":
+            return self.service.update_rollout_localization(request_payload)
+        if route == "rollout/context":
+            return self.service.update_rollout_context(request_payload)
         if route == "close":
             self.service.close()
             return {
@@ -106,6 +116,9 @@ def create_http_server(
                 return
             if self.path.rstrip("/") == "/audio/health":
                 self._write_json(HTTPStatus.OK, router.dispatch("audio/health", {}))
+                return
+            if self.path.rstrip("/") == "/rollout/status":
+                self._write_json(HTTPStatus.OK, router.dispatch("rollout/status", {}))
                 return
             self._write_json(
                 HTTPStatus.NOT_FOUND,
@@ -199,6 +212,11 @@ def _known_routes() -> set[str]:
         "resume",
         "close",
         "health",
+        "rollout/start",
+        "rollout/stop",
+        "rollout/status",
+        "rollout/localization",
+        "rollout/context",
         "audio/health",
         "audio/session/start",
         "audio/session/stop",

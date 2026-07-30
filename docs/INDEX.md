@@ -32,6 +32,8 @@ This index lists the Codex-facing documentation for this repository.
 - `docs/integration/vigil_bridge_interface.md`  
   Current bridge protocol, capabilities, message shapes, and extension table.
 
+- [Vigil Bridge 真机 Rollout 录制与导出](integration/vigil_rollout_recording.md)
+
 - `docs/integration/g1_audio_io.md`
   Unitree G1 audio input/output debugging notes and future runtime extension
   guidance.

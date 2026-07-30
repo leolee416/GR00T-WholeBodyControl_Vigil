@@ -21,6 +21,7 @@ from gear_sonic.vigil_bridge.real_adapter import (
     RealSensorProvider,
     create_real_bridge_service,
 )
+from gear_sonic.vigil_bridge.rollout_recorder import G1_JOINT_ORDER, RolloutRecorder
 from gear_sonic.vigil_bridge.sensors import FakeSensorProvider
 from gear_sonic.vigil_bridge.service import VigilBridgeService
 from gear_sonic.vigil_bridge.transport import BridgeRequestRouter, create_http_server, serve_http
@@ -33,12 +34,14 @@ __all__ = [
     "FakePrimitiveExecutor",
     "FakeSpeakerClient",
     "FakeSensorProvider",
+    "G1_JOINT_ORDER",
     "MujocoBridgeConfig",
     "MujocoPrimitiveExecutor",
     "MujocoSensorProvider",
     "RealBridgeConfig",
     "RealPrimitiveExecutor",
     "RealSensorProvider",
+    "RolloutRecorder",
     "VigilBridgeService",
     "create_http_server",
     "create_mujoco_bridge_service",

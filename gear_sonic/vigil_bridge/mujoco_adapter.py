@@ -23,7 +23,7 @@ import queue
 import struct
 import threading
 import time
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from gear_sonic.vigil_bridge.primitive_executor import DryRunPrimitiveExecutor
 from gear_sonic.vigil_bridge.protocol import (
@@ -33,6 +33,7 @@ from gear_sonic.vigil_bridge.protocol import (
     RobotStateResponse,
     RuntimeHealth,
 )
+from gear_sonic.vigil_bridge.rollout_recorder import G1_JOINT_ORDER, RolloutRecorder
 from gear_sonic.vigil_bridge.service import VigilBridgeService
 
 
@@ -148,6 +149,9 @@ class MujocoBridgeConfig:
     camera_port: int = 5555
     auto_start_control: bool = False
     stop_on_halt: bool = False
+    rollout_output_dir: str = "outputs/vigil_rollouts"
+    rollout_localization_max_age_s: float = 0.5
+    chair_motion_catalog: str | None = None
     verbose: bool = False
 
 
@@ -158,6 +162,13 @@ class MujocoRobotState:
     delta_heading: float
     timestamp: float
     yaw_rate: float | None = None
+    base_ang_vel: list[float] | None = None
+    body_q: list[float] | None = None
+    body_dq: list[float] | None = None
+    body_q_target: list[float] | None = None
+    policy_action: list[float] | None = None
+    source_index: int | None = None
+    ros_timestamp_s: float | None = None
 
 
 @dataclass
@@ -311,6 +322,7 @@ class StateSubscriber(threading.Thread):
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._latest: MujocoRobotState | None = None
+        self._sample_callback: Callable[[Mapping[str, Any], float, float], None] | None = None
         self.errors: queue.Queue[str] = queue.Queue(maxsize=5)
 
     def run(self) -> None:
@@ -330,17 +342,36 @@ class StateSubscriber(threading.Thread):
                 base_quat = data.get("base_quat")
                 if base_quat is None or len(base_quat) < 4:
                     continue
-                base_ang_vel = data.get("base_ang_vel")
-                yaw_rate = float(base_ang_vel[2]) if base_ang_vel and len(base_ang_vel) >= 3 else None
+                base_ang_vel = self._float_vector(data.get("base_ang_vel"), 3)
+                yaw_rate = base_ang_vel[2] if base_ang_vel is not None else None
+                body_q = self._float_vector(
+                    data.get("body_q_measured", data.get("body_q")),
+                    29,
+                )
+                body_dq = self._float_vector(data.get("body_dq"), 29)
+                body_q_target = self._float_vector(data.get("body_q_target"), 29)
+                policy_action = self._float_vector(data.get("last_action"), 29)
+                received_monotonic_s = time.monotonic()
+                received_wall_s = time.time()
                 state = MujocoRobotState(
                     yaw=yaw_from_quat_wxyz([float(v) for v in base_quat[:4]]),
                     base_quat=[float(v) for v in base_quat[:4]],
                     delta_heading=float(data.get("delta_heading", 0.0)),
-                    timestamp=time.monotonic(),
+                    timestamp=received_monotonic_s,
                     yaw_rate=yaw_rate,
+                    base_ang_vel=base_ang_vel,
+                    body_q=body_q,
+                    body_dq=body_dq,
+                    body_q_target=body_q_target,
+                    policy_action=policy_action,
+                    source_index=self._optional_int(data.get("index")),
+                    ros_timestamp_s=self._optional_float(data.get("ros_timestamp")),
                 )
                 with self._lock:
                     self._latest = state
+                    callback = self._sample_callback
+                if callback is not None:
+                    callback(data, received_monotonic_s, received_wall_s)
             except Exception as exc:  # noqa: BLE001 - keep subscriber alive.
                 self._remember_error(str(exc))
 
@@ -363,6 +394,13 @@ class StateSubscriber(threading.Thread):
             time.sleep(0.02)
         return self.latest()
 
+    def set_sample_callback(
+        self,
+        callback: Callable[[Mapping[str, Any], float, float], None] | None,
+    ) -> None:
+        with self._lock:
+            self._sample_callback = callback
+
     def _topic_msgpack_payload(self, message: bytes) -> Mapping[str, Any] | None:
         topic_bytes = self.topic.encode("utf-8")
         if not message.startswith(topic_bytes):
@@ -376,6 +414,31 @@ class StateSubscriber(threading.Thread):
             self.errors.put_nowait(text)
         except queue.Full:
             pass
+
+    @staticmethod
+    def _float_vector(value: Any, size: int) -> list[float] | None:
+        if not isinstance(value, list | tuple) or len(value) != size:
+            return None
+        try:
+            vector = [float(item) for item in value]
+        except (TypeError, ValueError):
+            return None
+        return vector if all(math.isfinite(item) for item in vector) else None
+
+    @staticmethod
+    def _optional_float(value: Any) -> float | None:
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return None
+        return result if math.isfinite(result) else None
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class DDSOdomSubscriber(threading.Thread):
@@ -476,8 +539,13 @@ class ZMQImageSubscriber:
 class MujocoRuntimeClient:
     """Runtime client shared by the MuJoCo executor and sensor provider."""
 
-    def __init__(self, config: MujocoBridgeConfig) -> None:
+    def __init__(
+        self,
+        config: MujocoBridgeConfig,
+        rollout_recorder: RolloutRecorder | None = None,
+    ) -> None:
         self.config = config
+        self.rollout_recorder = rollout_recorder
         self.started = False
         self._startup_error: str | None = None
         self._publisher: PackedPublisher | None = None
@@ -504,6 +572,9 @@ class MujocoRuntimeClient:
                     self.config.state_port,
                     self.config.state_topic,
                 )
+                set_callback = getattr(self._state_sub, "set_sample_callback", None)
+                if callable(set_callback) and self.rollout_recorder is not None:
+                    set_callback(self._record_rollout_sample)
                 self._state_sub.start()
             if self.config.odom_source in {"auto", "dds"} and self._odom_sub is None:
                 self._odom_sub = DDSOdomSubscriber(
@@ -767,7 +838,27 @@ class MujocoRuntimeClient:
                     [math.degrees(v) for v in angular_velocity] if angular_velocity is not None else None
                 ),
             },
-            "joint_positions": {},
+            "joint_positions": (
+                dict(zip(G1_JOINT_ORDER, state.body_q, strict=True))
+                if state is not None and state.body_q is not None
+                else {}
+            ),
+            "joint_velocities": (
+                dict(zip(G1_JOINT_ORDER, state.body_dq, strict=True))
+                if state is not None and state.body_dq is not None
+                else {}
+            ),
+            "joint_targets": (
+                dict(zip(G1_JOINT_ORDER, state.body_q_target, strict=True))
+                if state is not None and state.body_q_target is not None
+                else {}
+            ),
+            "policy_action": (
+                dict(zip(G1_JOINT_ORDER, state.policy_action, strict=True))
+                if state is not None and state.policy_action is not None
+                else {}
+            ),
+            "joint_order": list(G1_JOINT_ORDER),
             "estimated": odom is None,
             "source": "rt/odostate" if odom is not None else "g1_debug_heading",
         }
@@ -787,6 +878,36 @@ class MujocoRuntimeClient:
                 "age_s": now - odom.timestamp,
             }
         return payload
+
+    def _record_rollout_sample(
+        self,
+        payload: Mapping[str, Any],
+        received_monotonic_s: float,
+        received_wall_s: float,
+    ) -> None:
+        if self.rollout_recorder is None:
+            return
+        localization: Mapping[str, Any] | None = None
+        odom = self.latest_odom()
+        if (
+            odom is not None
+            and received_monotonic_s - odom.timestamp
+            <= self.rollout_recorder.localization_max_age_s
+        ):
+            localization = {
+                "base_xyz": odom.position,
+                "source": "rt/odostate",
+                "frame_id": "mujoco_world",
+                "valid": True,
+                "estimated": False,
+                "timestamp_s": received_wall_s,
+            }
+        self.rollout_recorder.record_g1_debug(
+            payload,
+            received_monotonic_s=received_monotonic_s,
+            received_wall_s=received_wall_s,
+            localization=localization,
+        )
 
     def get_health(self) -> RuntimeHealth:
         odom_connected = self.latest_odom() is not None
@@ -1361,11 +1482,17 @@ def create_mujoco_bridge_service(config: MujocoBridgeConfig | None = None) -> Vi
     """Create a bridge service backed by the MuJoCo runtime adapter."""
 
     bridge_config = config or MujocoBridgeConfig()
-    runtime = MujocoRuntimeClient(bridge_config)
+    rollout_recorder = RolloutRecorder(
+        output_root=bridge_config.rollout_output_dir,
+        runtime_mode=bridge_config.runtime_mode,
+        localization_max_age_s=bridge_config.rollout_localization_max_age_s,
+    )
+    runtime = MujocoRuntimeClient(bridge_config, rollout_recorder=rollout_recorder)
     executor = MujocoPrimitiveExecutor(config=bridge_config, runtime=runtime)
     sensor_provider = MujocoSensorProvider(runtime=runtime, runtime_mode=bridge_config.runtime_mode)
     return VigilBridgeService(
         executor=executor,
         sensor_provider=sensor_provider,
+        rollout_recorder=rollout_recorder,
         runtime_mode=bridge_config.runtime_mode,
     )
