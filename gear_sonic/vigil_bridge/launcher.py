@@ -119,7 +119,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--chair-motion-catalog",
         default=str(
             REPO_ROOT
-            / "gear_sonic/vigil_bridge/data/facee_chair_13s/manifest.json"
+            / "gear_sonic/vigil_bridge/data/facee_chair_13s_v2/manifest.json"
         ),
         help="Exact-distance FaceE chair reference manifest.",
     )

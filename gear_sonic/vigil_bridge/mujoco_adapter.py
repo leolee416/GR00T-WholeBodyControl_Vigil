@@ -247,6 +247,21 @@ class PackedPublisher:
         """Send one complete protocol-v1 reference chunk to ZMQManager."""
         import numpy as np
 
+        def scalar_value(name: str) -> Any:
+            value = frames.get(name)
+            if isinstance(value, np.ndarray):
+                if value.shape != ():
+                    raise ValueError(f"{name} must be scalar")
+                return value.item()
+            return value
+
+        if scalar_value("protocol_version") != 1:
+            raise ValueError("reference motion must declare protocol_version=1")
+        if scalar_value("joint_order") != "isaaclab":
+            raise ValueError(
+                "ZMQ protocol v1 reference motion must declare joint_order=isaaclab"
+            )
+
         joint_pos = np.asarray(frames.get("joint_pos"), dtype="<f4")
         joint_vel = np.asarray(frames.get("joint_vel"), dtype="<f4")
         body_quat = np.asarray(frames.get("body_quat_w"), dtype="<f4")

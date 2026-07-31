@@ -12,6 +12,7 @@ recorded separately from task-level acceptance.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -25,7 +26,8 @@ import torch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = REPO_ROOT / "gear_sonic/vigil_bridge/data/facee_chair_13s"
+DEFAULT_OUTPUT = REPO_ROOT / "gear_sonic/vigil_bridge/data/facee_chair_13s_v2"
+G1_ORDER_SOURCE = REPO_ROOT / "gear_sonic/envs/manager_env/robots/g1.py"
 DEPLOYMENT_DECISION = (
     "out/faceE_sonic_v1_1_noheight_v65/"
     "deployment_candidate_v73_task_accept_20260730.json"
@@ -44,6 +46,22 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def literal_assignment(path: Path, name: str):
+    """Read a literal constant without importing the Isaac-Lab-heavy module."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in node.targets
+            ):
+                return ast.literal_eval(node.value)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == name:
+                return ast.literal_eval(node.value)
+    raise KeyError(f"{name} not found in {path}")
 
 
 def main() -> None:
@@ -101,6 +119,22 @@ def main() -> None:
         )
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    mujoco_to_isaaclab = np.asarray(
+        literal_assignment(G1_ORDER_SOURCE, "G1_MUJOCO_TO_ISAACLAB_DOF"),
+        dtype=np.int64,
+    )
+    isaaclab_to_mujoco = np.asarray(
+        literal_assignment(G1_ORDER_SOURCE, "G1_ISAACLAB_TO_MUJOCO_DOF"),
+        dtype=np.int64,
+    )
+    if (
+        mujoco_to_isaaclab.shape != (29,)
+        or isaaclab_to_mujoco.shape != (29,)
+        or not np.array_equal(
+            isaaclab_to_mujoco[mujoco_to_isaaclab], np.arange(29)
+        )
+    ):
+        raise ValueError("G1 MuJoCo/IsaacLab DOF mappings are invalid")
 
     cfg = OmegaConf.create(
         {
@@ -174,8 +208,14 @@ def main() -> None:
             target_fps=50,
             interpolate_data=True,
         )
-        joint_pos = fk.dof_pos[0].cpu().numpy().astype(np.float32)
-        joint_vel = fk.dof_vels[0].cpu().numpy().astype(np.float32)
+        joint_pos_mujoco = fk.dof_pos[0].cpu().numpy().astype(np.float32)
+        joint_vel_mujoco = fk.dof_vels[0].cpu().numpy().astype(np.float32)
+        # ZMQ streamed-motion protocol v1 consumes all 29 motion-reference
+        # joints in IsaacLab order.  Humanoid_Batch follows the source
+        # PKL/MJCF order, so the deployment asset must cross this boundary
+        # exactly once before it is serialized.
+        joint_pos = joint_pos_mujoco[:, mujoco_to_isaaclab]
+        joint_vel = joint_vel_mujoco[:, mujoco_to_isaaclab]
         root_quat_xyzw = fk.global_rotation[0, :, 0].cpu().numpy()
         root_quat_wxyz = root_quat_xyzw[:, [3, 0, 1, 2]].astype(np.float32)
         if joint_pos.shape != (650, 29) or joint_vel.shape != (650, 29):
@@ -190,6 +230,9 @@ def main() -> None:
             joint_vel=joint_vel,
             body_quat_w=root_quat_wxyz,
             frame_index=np.arange(650, dtype=np.int64),
+            joint_order=np.asarray("isaaclab"),
+            source_joint_order=np.asarray("mujoco"),
+            protocol_version=np.asarray(1, dtype=np.int32),
         )
         generated[tag] = {
             "joint_pos": joint_pos,
@@ -208,6 +251,10 @@ def main() -> None:
                 "frames": 650,
                 "duration_s": 13.0,
                 "encode_mode": 0,
+                "protocol_version": 1,
+                "source_joint_order": "mujoco",
+                "joint_order": "isaaclab",
+                "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
                 "source_motion_library": source_motion_library,
                 "source_motion_key": motion_key,
                 "source_robot_pkl_sha256": sha256(source_path),
@@ -233,8 +280,16 @@ def main() -> None:
                 raise ValueError(f"{tag}: {field} must exactly reuse {donor_tag}")
 
     manifest = {
-        "schema_version": 1,
-        "name": "faceE_v73_noheight_user_selected_real_bridge",
+        "schema_version": 2,
+        "name": "faceE_v73_noheight_user_selected_real_bridge_v2",
+        "protocol_version": 1,
+        "source_joint_order": "mujoco",
+        "joint_order": "isaaclab",
+        "joint_count": 29,
+        "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+        "joint_order_mapping_values": mujoco_to_isaaclab.tolist(),
+        "joint_order_mapping_source": str(G1_ORDER_SOURCE.relative_to(REPO_ROOT)),
+        "joint_order_mapping_source_sha256": sha256(G1_ORDER_SOURCE),
         "source_results": str(selection_path.relative_to(grail_root)),
         "source_results_sha256": sha256(selection_path),
         "deployment_decision": str(deployment_path.relative_to(grail_root)),
@@ -254,8 +309,9 @@ def main() -> None:
         ),
         "construction": (
             "Gear-SONIC Humanoid_Batch FK with the source FPS and target_fps=50; "
-            "joint positions/velocities plus root quaternion are serialized for "
-            "ZMQ streamed-motion protocol v1. d1.35/d1.40 reuse the exact d1.45 "
+            "FK joint positions/velocities are converted exactly once from MuJoCo "
+            "to IsaacLab order before serialization for ZMQ streamed-motion "
+            "protocol v1. d1.35/d1.40 reuse the exact d1.45 "
             "robot reference. d1.55 reuses d1.70 and d1.65 reuses d1.80 after "
             "user review of independent Isaac/MuJoCo cross-distance rollouts. "
             "Task-level acceptance does not overwrite raw strict failures."

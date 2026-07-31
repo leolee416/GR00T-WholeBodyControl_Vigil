@@ -97,7 +97,7 @@
       "allclose": true
     }
   },
-  "motion_catalog": "gear_sonic/vigil_bridge/data/facee_chair_13s/manifest.json",
+  "motion_catalog": "gear_sonic/vigil_bridge/data/facee_chair_13s_v2/manifest.json",
   "distribution": {
     "oss_prefix": "oss://xrobot-data/fs/r2s_ego_exp/GR00T-WholeBodyControl_Vigil/policy/facee_v73_noheight/"
   },

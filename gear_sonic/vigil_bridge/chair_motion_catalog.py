@@ -12,7 +12,9 @@ from typing import Any
 import numpy as np
 
 
-DEFAULT_CATALOG = Path(__file__).resolve().parent / "data/facee_chair_13s/manifest.json"
+DEFAULT_CATALOG = (
+    Path(__file__).resolve().parent / "data/facee_chair_13s_v2/manifest.json"
+)
 
 
 @dataclass(frozen=True)
@@ -32,10 +34,37 @@ class ChairMotionCatalog:
         self.manifest_path = Path(manifest_path).expanduser().resolve()
         payload = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         records = payload.get("motions")
-        if payload.get("schema_version") != 1 or not isinstance(records, list):
+        if payload.get("schema_version") != 2 or not isinstance(records, list):
             raise ValueError("unsupported chair-motion manifest")
+        required_contract = {
+            "protocol_version": 1,
+            "source_joint_order": "mujoco",
+            "joint_order": "isaaclab",
+            "joint_count": 29,
+            "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+        }
+        for name, expected_value in required_contract.items():
+            if payload.get(name) != expected_value:
+                raise ValueError(
+                    f"chair-motion manifest {name} must be {expected_value!r}"
+                )
+        mapping = payload.get("joint_order_mapping_values")
+        if not isinstance(mapping, list) or sorted(mapping) != list(range(29)):
+            raise ValueError("chair-motion manifest has invalid joint-order mapping")
         self._records: dict[int, dict[str, Any]] = {}
         for record in records:
+            for name in ("protocol_version", "source_joint_order", "joint_order"):
+                if record.get(name) != required_contract[name]:
+                    raise ValueError(
+                        f"{record.get('tag', '<unknown>')}: {name} must be "
+                        f"{required_contract[name]!r}"
+                    )
+            if record.get("joint_order_mapping") != required_contract[
+                "joint_order_mapping"
+            ]:
+                raise ValueError(
+                    f"{record.get('tag', '<unknown>')}: invalid joint-order mapping"
+                )
             distance = float(record["distance_m"])
             key = round(distance * 100)
             if abs(distance * 100 - key) > 1e-6 or key in self._records:
@@ -102,6 +131,19 @@ class ChairMotionCatalog:
                 raise ValueError(f"{record['tag']}: {name} contains non-finite values")
         if not np.array_equal(frames["frame_index"], np.arange(count)):
             raise ValueError(f"{record['tag']}: frame_index must be contiguous from zero")
+        scalar_contract = {
+            "joint_order": "isaaclab",
+            "source_joint_order": "mujoco",
+            "protocol_version": 1,
+        }
+        for name, expected_value in scalar_contract.items():
+            value = frames.get(name)
+            if not isinstance(value, np.ndarray) or value.shape != ():
+                raise ValueError(f"{record['tag']}: {name} must be a scalar array")
+            if value.item() != expected_value:
+                raise ValueError(
+                    f"{record['tag']}: {name} must be {expected_value!r}"
+                )
 
     @staticmethod
     def _sha256(path: Path) -> str:

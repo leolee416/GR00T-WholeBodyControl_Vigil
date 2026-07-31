@@ -155,7 +155,7 @@ def main() -> None:
         "models": models,
         "pytorch_onnx_parity": parity,
         "motion_catalog": (
-            "gear_sonic/vigil_bridge/data/facee_chair_13s/manifest.json"
+            "gear_sonic/vigil_bridge/data/facee_chair_13s_v2/manifest.json"
         ),
         "acceptance": {
             "strict_tracking_successes": 16,

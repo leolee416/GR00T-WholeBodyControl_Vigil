@@ -12,10 +12,10 @@
 out/faceE_all_success_hold13_selected_v64/results.json
 ```
 
-部署资源位于：
+部署资源位于（schema v2，protocol-v1 IsaacLab order）：
 
 ```text
-gear_sonic/vigil_bridge/data/facee_chair_13s/
+gear_sonic/vigil_bridge/data/facee_chair_13s_v2/
 ├── manifest.json
 ├── d1p15.npz
 ├── ...
@@ -41,10 +41,12 @@ git branch --show-current
 python3 -m pytest -q \
   tests/vigil_bridge \
   tests/test_chair_motion_catalog.py \
-  tests/test_reference_motion_packing.py
+  tests/test_reference_motion_packing.py \
+  tests/test_facee_joint_order_contract.py
 ```
 
-预期分支为 `er2s_ego_exp2`，当前基线结果为 `59 passed`。
+预期分支为 `r2s_ego_exp_fangs`。上述整组 bridge/joint-order 回归当前为
+`85 passed`。
 
 dry-run HTTP smoke：
 
@@ -103,7 +105,7 @@ launcher 会自动传默认 manifest；如需显式覆盖：
 ```bash
 ./vigil_bridge start \
   --chair-motion-catalog \
-  /workspace/fangs1@xiaopeng.com/workspace_fs/GR00T-WholeBodyControl_Vigil/gear_sonic/vigil_bridge/data/facee_chair_13s/manifest.json
+  /workspace/fangs1@xiaopeng.com/workspace_fs/GR00T-WholeBodyControl_Vigil/gear_sonic/vigil_bridge/data/facee_chair_13s_v2/manifest.json
 ```
 
 ## 真机动作请求

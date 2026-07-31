@@ -22,15 +22,18 @@ v73 策略的 PyTorch→ONNX 导出物，以及 `sonic.sit_chair` 的距离选�
 
 ## 资源
 
-Reference 清单：
+Reference 清单（schema v2，是 bridge 当前默认资产）：
 
 ```text
-gear_sonic/vigil_bridge/data/facee_chair_13s/manifest.json
+gear_sonic/vigil_bridge/data/facee_chair_13s_v2/manifest.json
 ```
 
 每条资源为 650 帧、50 Hz、13 秒，包含 29-DoF 位置/速度和 wxyz 根四元数。
-清单保存每个 NPZ 和原 GRAIL robot PKL 的 SHA-256；加载时再次校验哈希、
-shape、有限值和连续 frame index。
+q/dq 在打包边界从 MuJoCo order 转换一次为 protocol-v1 要求的
+IsaacLab order。清单和 NPZ 都显式声明 `protocol_version=1`、
+`source_joint_order=mujoco`、`joint_order=isaaclab`；加载时校验语义契约、
+哈希、shape、有限值和连续 frame index。旧 `facee_chair_13s/` 仅留作根因取证，
+不得用于新部署。
 
 v73 候选策略：
 
@@ -237,6 +240,26 @@ SHA-256：
 ```
 
 ## MuJoCo 证据
+
+### 部署等价 v2 证据
+
+Agent-Sim 现在把同一条 schema-v2 NPZ 直接作为 policy reference，仅使用
+GRAIL PKL 补足 root translation 和 FK/physics 辅助数据。代表性 fresh run：
+
+| 距离 | 控制帧/时长 | 末 2 s 座面接触 | 最终 torso 倾角 | 结果 |
+|---:|---:|---:|---:|---|
+| 1.70 m | 650 / 13.0 s | 1.0 | 74.92° | FAIL，末段后仰 |
+| 2.00 m | 650 / 13.0 s | 1.0 | 11.86° | PASS |
+
+```text
+/workspace/fangs1@xiaopeng.com/workspace_fs/codex_session_restore/
+  facee_joint_order_v2_deployment_parity_2026-07-31/
+```
+
+因此，下面旧报告中从 source PKL 在 runner 内重建 reference 得到的 PASS，
+只能作为历史接触动力学证据，不能再当作真机 ZMQ 部署链路的 parity 证据。
+
+### 历史 PKL 重建证据
 
 持久目录：
 

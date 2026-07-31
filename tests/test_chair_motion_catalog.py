@@ -25,7 +25,18 @@ def test_official_catalog_is_exact_18_distance_grid() -> None:
         assert motion.frames["joint_pos"].shape == (650, 29)
         assert motion.frames["joint_vel"].shape == (650, 29)
         assert motion.frames["body_quat_w"].shape == (650, 4)
+        assert motion.frames["joint_order"].item() == "isaaclab"
+        assert motion.frames["source_joint_order"].item() == "mujoco"
+        assert motion.frames["protocol_version"].item() == 1
         assert motion.duration_s == 13.0
+
+    manifest = json.loads(DEFAULT_CATALOG.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    assert manifest["protocol_version"] == 1
+    assert manifest["source_joint_order"] == "mujoco"
+    assert manifest["joint_order"] == "isaaclab"
+    assert manifest["joint_count"] == 29
+    assert manifest["joint_order_mapping"] == "G1_MUJOCO_TO_ISAACLAB_DOF"
 
 
 def test_user_selected_reference_reuse_and_audit_status() -> None:
@@ -95,6 +106,35 @@ def test_catalog_rejects_modified_asset(tmp_path: Path) -> None:
     (tmp_path / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="checksum"):
         ChairMotionCatalog(tmp_path / "manifest.json").load(1.15)
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("schema_version", 1),
+        ("protocol_version", 2),
+        ("joint_order", "mujoco"),
+        ("source_joint_order", "isaaclab"),
+        ("joint_count", 28),
+    ],
+)
+def test_catalog_rejects_wrong_top_level_contract(
+    tmp_path: Path, field: str, bad_value: object
+) -> None:
+    payload = json.loads(DEFAULT_CATALOG.read_text(encoding="utf-8"))
+    payload[field] = bad_value
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError):
+        ChairMotionCatalog(manifest)
+
+
+def test_d1p70_first_frame_has_isaaclab_semantics() -> None:
+    first = ChairMotionCatalog().load(1.70).frames["joint_pos"][0]
+    # IsaacLab slots 0/1/2 are left hip pitch, right hip pitch, waist yaw.
+    assert first[:3] == pytest.approx(
+        [0.176505998, 0.198895991, 0.030484870], abs=1e-8
+    )
 
 
 def test_dry_run_selects_only_requested_reference() -> None:
