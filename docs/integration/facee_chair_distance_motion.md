@@ -35,6 +35,34 @@ IsaacLab order。清单和 NPZ 都显式声明 `protocol_version=1`、
 哈希、shape、有限值和连续 frame index。旧 `facee_chair_13s/` 仅留作根因取证，
 不得用于新部署。
 
+通过 ZMQ 发送到 deploy 时，bridge 会额外附加 46 帧终止保持（位置和根姿态
+保持末帧、关节速度置零）。它们只为满足 v73 的 10×5 future observation
+window；catalog NPZ 仍保持原始 650 帧，动作语义与时长仍为 13 秒。
+
+真机执行前可以调用只读诊断接口；`arm_rollout=true` 会预置 3 秒前录制和
+动作后的诊断数据采集，但不会发送运动命令：
+
+```bash
+curl -sS http://127.0.0.1:8765/diagnostics/sit_chair/preflight \
+  -H 'Content-Type: application/json' \
+  -d '{"runtime_mode":"real","chair_distance_m":1.80,"arm_rollout":true}'
+```
+
+rollout 导出后可分析最新一次执行：
+
+```bash
+curl -sS http://127.0.0.1:8765/diagnostics/sit_chair/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+如果直接调用 `/execute_action` 而没有手工启动 rollout，recorder 也会自动建立
+3 秒 pre-roll、动作窗口和 3 秒 post-roll。分析结果的
+`anomaly_timeline.first_anomaly` 会给出相对动作开始的秒数、rollout 时间、
+`g1_debug` source index、该时刻误差最大的关节，以及与该 source index 最近的
+RGB/深度 observation 路径。异常定义为相对动作前基线连续 5 个 50 Hz 样本
+越界，以过滤单帧噪声。
+
 v73 候选策略：
 
 ```text

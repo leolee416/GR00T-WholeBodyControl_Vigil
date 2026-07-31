@@ -34,6 +34,9 @@ from gear_sonic.vigil_bridge.protocol import (
     RobotStateResponse,
     RuntimeHealth,
 )
+from gear_sonic.vigil_bridge.reference_motion import (
+    STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES,
+)
 from gear_sonic.vigil_bridge.rollout_recorder import G1_JOINT_ORDER, RolloutRecorder
 from gear_sonic.vigil_bridge.service import VigilBridgeService
 
@@ -246,8 +249,13 @@ class PackedPublisher:
         )
         self._send_packed("planner", header, data)
 
-    def send_reference_motion(self, frames: Mapping[str, Any]) -> None:
-        """Send one complete protocol-v1 reference chunk to ZMQManager."""
+    def send_reference_motion(self, frames: Mapping[str, Any]) -> int:
+        """Send a reference chunk plus terminal hold frames to ZMQManager.
+
+        The additional frames are not part of the source motion duration. They
+        exist solely to satisfy the deploy encoder's future-observation window
+        while it plays the final source frame at the normal 50 Hz cursor rate.
+        """
         import numpy as np
 
         def scalar_value(name: str) -> Any:
@@ -280,6 +288,26 @@ class PackedPublisher:
             raise ValueError("frame_index must have shape [frames]")
         if count <= 0:
             raise ValueError("reference motion must not be empty")
+
+        hold_count = STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES
+        joint_pos = np.concatenate(
+            (joint_pos, np.repeat(joint_pos[-1:], hold_count, axis=0)), axis=0
+        )
+        joint_vel = np.concatenate(
+            (joint_vel, np.zeros((hold_count, 29), dtype=joint_vel.dtype)), axis=0
+        )
+        body_quat = np.concatenate(
+            (body_quat, np.repeat(body_quat[-1:], hold_count, axis=0)), axis=0
+        )
+        frame_index = np.concatenate(
+            (
+                frame_index,
+                frame_index[-1]
+                + np.arange(1, hold_count + 1, dtype=frame_index.dtype),
+            ),
+            axis=0,
+        )
+        count += hold_count
         fields = [
             {"name": "joint_pos", "dtype": "f32", "shape": [count, 29]},
             {"name": "joint_vel", "dtype": "f32", "shape": [count, 29]},
@@ -305,6 +333,7 @@ class PackedPublisher:
             {"v": 1, "endian": "le", "count": count, "fields": fields},
             data,
         )
+        return count
 
     def _send_packed(self, topic: str, header: dict[str, Any], data: bytes) -> None:
         import json
@@ -998,12 +1027,19 @@ class MujocoRuntimeClient:
                 "estimated": False,
                 "timestamp_s": received_wall_s,
             }
-        self.rollout_recorder.record_g1_debug(
+        recorded = self.rollout_recorder.record_g1_debug(
             payload,
             received_monotonic_s=received_monotonic_s,
             received_wall_s=received_wall_s,
             localization=localization,
         )
+        if recorded:
+            self.rollout_recorder.record_camera_payload(
+                self.latest_camera_payload(),
+                received_monotonic_s=received_monotonic_s,
+                received_wall_s=received_wall_s,
+                pose_source_index=payload.get("index", -1),
+            )
 
     def get_health(self) -> RuntimeHealth:
         odom_connected = self.latest_odom() is not None

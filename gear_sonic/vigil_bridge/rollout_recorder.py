@@ -9,6 +9,9 @@ used as measured odometry.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import json
 import math
 import os
@@ -92,6 +95,8 @@ class RolloutRecorder:
         self._active = False
         self._samples: list[dict[str, Any]] = []
         self._rolling_buffer: list[dict[str, Any]] = []
+        self._camera_frames: list[dict[str, Any]] = []
+        self._camera_digests: dict[str, str] = {}
         self._session_id: str | None = None
         self._session_dir: Path | None = None
         self._started_wall_s: float | None = None
@@ -177,6 +182,8 @@ class RolloutRecorder:
 
             self._active = True
             self._samples = []
+            self._camera_frames = []
+            self._camera_digests = {}
             self._session_id = session_dir.name
             self._session_dir = session_dir
             self._started_wall_s = now_wall
@@ -278,6 +285,7 @@ class RolloutRecorder:
                 smoothing_window += 1
 
             samples = [dict(sample) for sample in self._samples]
+            camera_frames = [dict(frame) for frame in self._camera_frames]
             session_id = self._session_id
             session_dir = self._session_dir
             metadata = dict(self._metadata)
@@ -296,6 +304,7 @@ class RolloutRecorder:
                 session_dir=session_dir,
                 metadata=metadata,
                 chair_world_pose=chair_world_pose,
+                camera_frames=camera_frames,
                 target_fps=target_fps,
                 smoothing_window=smoothing_window,
                 dropped_samples=dropped_samples,
@@ -309,6 +318,7 @@ class RolloutRecorder:
         with self._lock:
             self._last_export = export_result
             self._samples = []
+            self._camera_frames = []
             self._last_error = None
         return export_result
 
@@ -415,6 +425,63 @@ class RolloutRecorder:
                 return False
             self._last_error = None
             return True
+
+    def record_camera_payload(
+        self,
+        payload: Mapping[str, Any] | None,
+        *,
+        received_monotonic_s: float | None = None,
+        received_wall_s: float | None = None,
+        pose_source_index: Any = -1,
+    ) -> int:
+        """Save newly received JPEG frames and link them to the pose sample.
+
+        The camera transport exposes its latest frame rather than a hardware
+        synchronizer.  ``camera_index.json`` therefore preserves the camera
+        timestamp when provided and the bridge receive time used for pairing.
+        """
+        if not isinstance(payload, Mapping):
+            return 0
+        images = payload.get("images")
+        if not isinstance(images, Mapping):
+            return 0
+        timestamps = payload.get("timestamps")
+        timestamps = timestamps if isinstance(timestamps, Mapping) else {}
+        now_monotonic = time.monotonic() if received_monotonic_s is None else float(received_monotonic_s)
+        now_wall = time.time() if received_wall_s is None else float(received_wall_s)
+
+        with self._lock:
+            if not self._active or self._session_dir is None:
+                return 0
+            saved = 0
+            for camera_name, value in images.items():
+                image_bytes = self._camera_bytes(value)
+                if image_bytes is None:
+                    continue
+                name = self._sanitize_name(str(camera_name))
+                digest = hashlib.sha256(image_bytes).hexdigest()
+                if self._camera_digests.get(name) == digest:
+                    continue
+                self._camera_digests[name] = digest
+                frame_index = len(self._camera_frames)
+                relative_path = Path("observations") / name / f"{frame_index:06d}.jpg"
+                self._atomic_write_bytes(self._session_dir / relative_path, image_bytes)
+                self._camera_frames.append(
+                    {
+                        "frame_index": frame_index,
+                        "camera_name": str(camera_name),
+                        "path": str(relative_path),
+                        "sha256": digest,
+                        "byte_size": len(image_bytes),
+                        "camera_timestamp": self._json_safe_scalar(timestamps.get(camera_name)),
+                        "received_monotonic_s": now_monotonic,
+                        "received_wall_s": now_wall,
+                        "pose_source_index": self._safe_int(pose_source_index, -1),
+                        "capture_phase": self._capture_phase_for_timestamp_locked(now_monotonic),
+                    }
+                )
+                saved += 1
+            return saved
 
     def update_localization(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -678,6 +745,7 @@ class RolloutRecorder:
                 "session_id": self._session_id,
                 "session_dir": str(self._session_dir) if self._session_dir is not None else None,
                 "sample_count": len(self._samples),
+                "camera_frame_count": len(self._camera_frames),
                 "prebuffer_sample_count": len(self._rolling_buffer),
                 "dropped_sample_count": self._dropped_samples,
                 "elapsed_s": (
@@ -819,6 +887,7 @@ class RolloutRecorder:
         session_dir: Path,
         metadata: dict[str, Any],
         chair_world_pose: dict[str, Any],
+        camera_frames: list[dict[str, Any]],
         target_fps: float,
         smoothing_window: int,
         dropped_samples: int,
@@ -1036,6 +1105,19 @@ class RolloutRecorder:
             export_warnings.append(
                 "checkpoint metadata was not supplied to /rollout/start"
             )
+        camera_index_path = session_dir / "camera_index.json"
+        self._atomic_write_json(
+            camera_index_path,
+            {
+                "schema_version": "groot_rollout_camera_index_v1",
+                "frame_count": len(camera_frames),
+                "association": (
+                    "bridge receive time paired with the triggering g1_debug sample; "
+                    "camera timestamps are source-provided when available"
+                ),
+                "frames": camera_frames,
+            },
+        )
         manifest = {
             "ok": True,
             "error_message": None,
@@ -1047,6 +1129,8 @@ class RolloutRecorder:
             "raw_real_rollout": str(raw_path),
             "3dgs_replay": str(replay_path),
             "gear_sonic_reference": str(reference_path),
+            "camera_index": str(camera_index_path),
+            "camera_frame_count": len(camera_frames),
             "kinematic_replay_ready": True,
             "spatial_3dgs_replay_ready": spatial_replay_ready,
             "chair_relative_replay_ready": chair_relative_replay_ready,
@@ -1321,6 +1405,39 @@ class RolloutRecorder:
             phases[timestamps > action_finished_s] = "post"
         return phases
 
+    def _capture_phase_for_timestamp_locked(self, timestamp_s: float) -> str:
+        if self._capture_started_monotonic_s is None:
+            return "continuous"
+        if timestamp_s < self._capture_started_monotonic_s:
+            return "pre"
+        if (
+            self._capture_finished_monotonic_s is not None
+            and timestamp_s > self._capture_finished_monotonic_s
+        ):
+            return "post"
+        return "action"
+
+    @staticmethod
+    def _camera_bytes(value: Any) -> bytes | None:
+        if isinstance(value, bytes | bytearray):
+            return bytes(value)
+        if isinstance(value, str):
+            try:
+                return base64.b64decode(value, validate=True)
+            except (ValueError, binascii.Error):
+                return None
+        return None
+
+    @staticmethod
+    def _json_safe_scalar(value: Any) -> float | str | None:
+        if value is None:
+            return None
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        return result if math.isfinite(result) else None
+
     @staticmethod
     def _export_warnings(
         base_xyz_valid: np.ndarray,
@@ -1364,6 +1481,16 @@ class RolloutRecorder:
         with temporary.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+
+    @staticmethod
+    def _atomic_write_bytes(path: Path, payload: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp")
+        with temporary.open("wb") as handle:
+            handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import time
 from pathlib import Path
@@ -125,6 +126,41 @@ def test_missing_external_localization_stays_invalid_and_nan(tmp_path) -> None:
         assert bool(raw["base_xyz_valid"][0]) is False
         assert np.isnan(raw["base_xyz_world"][0]).all()
         assert raw["base_xyz_source"][0] == "none"
+
+
+def test_rollout_recorder_exports_camera_frame_with_pose_association(tmp_path) -> None:
+    recorder = RolloutRecorder(tmp_path, runtime_mode="real")
+    recorder.start({"session_name": "camera", "capture_mode": "continuous"})
+    now = time.monotonic()
+    assert recorder.record_g1_debug(
+        _g1_debug_sample(12, 0.2),
+        received_monotonic_s=now,
+        received_wall_s=1234.5,
+    )
+    jpeg = b"\xff\xd8camera-frame\xff\xd9"
+    assert recorder.record_camera_payload(
+        {
+            "images": {"head/front": base64.b64encode(jpeg).decode("ascii")},
+            "timestamps": {"head/front": 77.25},
+        },
+        received_monotonic_s=now,
+        received_wall_s=1234.5,
+        pose_source_index=12,
+    ) == 1
+    assert recorder.record_camera_payload(
+        {"images": {"head/front": jpeg}},
+        received_monotonic_s=now + 0.01,
+        pose_source_index=13,
+    ) == 0
+
+    result = recorder.stop()
+
+    camera_index = json.loads(Path(result["camera_index"]).read_text())
+    assert camera_index["frame_count"] == 1
+    frame = camera_index["frames"][0]
+    assert frame["pose_source_index"] == 12
+    assert frame["camera_timestamp"] == pytest.approx(77.25)
+    assert (Path(result["session_dir"]) / frame["path"]).read_bytes() == jpeg
 
 
 def test_sit_window_keeps_only_three_seconds_before_and_after(tmp_path) -> None:

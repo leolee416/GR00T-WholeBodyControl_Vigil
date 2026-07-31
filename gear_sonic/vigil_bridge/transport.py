@@ -57,6 +57,10 @@ class BridgeRequestRouter:
             return self.service.update_rollout_localization(request_payload)
         if route == "rollout/context":
             return self.service.update_rollout_context(request_payload)
+        if route == "diagnostics/sit_chair/preflight":
+            return self.service.diagnose_sit_chair_preflight(request_payload)
+        if route == "diagnostics/sit_chair/analyze":
+            return self.service.analyze_sit_chair_rollout(request_payload)
         if route == "close":
             self.service.close()
             return {
@@ -217,6 +221,8 @@ def _known_routes() -> set[str]:
         "rollout/status",
         "rollout/localization",
         "rollout/context",
+        "diagnostics/sit_chair/preflight",
+        "diagnostics/sit_chair/analyze",
         "audio/health",
         "audio/session/start",
         "audio/session/stop",

@@ -30,6 +30,7 @@ from gear_sonic.vigil_bridge.mujoco_adapter import (
     MoveModelSample,
     PackedPublisher,
     REPO_ROOT,
+    STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES,
     StateSubscriber,
     ZMQImageSubscriber,
     facing_from_yaw,
@@ -263,6 +264,9 @@ class RealRuntimeClient:
                 }
             )
         publisher.send_reference_motion(frames)
+        transmitted_frame_count = (
+            len(frames["joint_pos"]) + STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES
+        )
         return {
             "motion": "sonic_reference_motion",
             "sonic_input": "reference_motion",
@@ -272,6 +276,8 @@ class RealRuntimeClient:
             "tag": str(payload.get("tag", "")),
             "duration_s": float(payload.get("duration_s", 0.0)),
             "frame_count": len(frames["joint_pos"]),
+            "transmitted_frame_count": transmitted_frame_count,
+            "terminal_hold_frame_count": transmitted_frame_count - len(frames["joint_pos"]),
         }
 
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> JSONDict:
@@ -484,11 +490,18 @@ class RealRuntimeClient:
     ) -> None:
         if self.rollout_recorder is None:
             return
-        self.rollout_recorder.record_g1_debug(
+        recorded = self.rollout_recorder.record_g1_debug(
             payload,
             received_monotonic_s=received_monotonic_s,
             received_wall_s=received_wall_s,
         )
+        if recorded:
+            self.rollout_recorder.record_camera_payload(
+                self.latest_camera_payload(),
+                received_monotonic_s=received_monotonic_s,
+                received_wall_s=received_wall_s,
+                pose_source_index=payload.get("index", -1),
+            )
 
     def get_health(self) -> RuntimeHealth:
         state_connected = self.latest_state() is not None

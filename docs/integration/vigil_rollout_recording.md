@@ -12,6 +12,8 @@ Vigil Bridge 可以从 deploy 已有的 `g1_debug` ZMQ 流录制 G1 的实测关
 - `3dgs_replay.npz`：3DGS/可视化侧运动学回放输入。
 - `gear_sonic_reference.npz`：平滑并重采样后的 Gear-Sonic reference 候选。
 - `manifest.json`：文件路径、完整性和可用性说明。
+- `observations/<camera>/<frame>.jpg` 与 `camera_index.json`：相机原始 JPEG，及其
+  相机时间戳（如相机提供）、Bridge 接收时间和对应的 `g1_debug.source_index`。
 
 实现完全位于 Bridge 层，不会修改或启动底层控制、policy inference 或真机安全路径。
 
@@ -24,6 +26,10 @@ Bridge 从 `g1_debug` 读取：
 - `base_quat[4]`、`base_ang_vel[3]`：IMU 姿态和角速度。
 - `body_q_target[29]`：当前 reference 的目标关节角。
 - `last_action[29]`：已映射到 MuJoCo 顺序、乘 scale 并加 default offset 的 policy 关节位置命令；不是网络原始 tensor。
+
+相机启用时，Recorder 在每个成功写入的 pose 样本后读取最新相机帧；仅保存内容发生
+变化的 JPEG 帧，并在 `camera_index.json` 中关联触发该次采样的 pose。该关联以
+Bridge 接收时间为准，不宣称为硬件级同步。
 
 `g1_debug.base_trans_measured` 是 deploy 中固定的可视化占位值，Recorder 明确忽略它。`base_xyz` 只能由外部定位接口写入，且必须携带来源，例如 VIO、动捕、外部里程计或 3DGS 相机定位。缺失或过期时导出 `NaN` 和 `valid=false`，不会伪造轨迹。
 

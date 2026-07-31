@@ -25,6 +25,11 @@ from gear_sonic.vigil_bridge.protocol import (
 )
 from gear_sonic.vigil_bridge.rollout_recorder import RolloutRecorder
 from gear_sonic.vigil_bridge.sensors import FakeSensorProvider
+from gear_sonic.vigil_bridge.sit_chair_diagnostics import (
+    analyze_rollout,
+    diagnose_preflight,
+    select_rollout_session,
+)
 
 
 @dataclass
@@ -213,6 +218,78 @@ class VigilBridgeService:
         telemetry.update(dict(state_response.get("telemetry", {})))
         state_response["telemetry"] = telemetry
         return state_response
+
+    def diagnose_sit_chair_preflight(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Read current state, validate a reference, and optionally arm capture."""
+        if self._closed:
+            return {"ok": False, "error_message": "bridge service is closed"}
+        self._set_runtime_mode(str(payload.get("runtime_mode", self.runtime_mode)))
+        assert self.executor is not None
+        assert self.sensor_provider is not None
+        try:
+            state_response = self.sensor_provider.get_robot_state()
+            response = diagnose_preflight(
+                executor=self.executor,
+                state_response=state_response,
+                request=payload,
+            )
+            if bool(payload.get("arm_rollout", False)):
+                if self.rollout_recorder is None:
+                    raise RuntimeError("rollout recorder is not configured")
+                selected = response["selected_reference"]
+                session_name = str(
+                    payload.get(
+                        "session_name",
+                        f"facee_diagnostic_{selected['tag']}",
+                    )
+                )
+                response["rollout"] = self.rollout_recorder.start(
+                    {
+                        "session_name": session_name,
+                        "capture_mode": "skill_window",
+                        "capture_skill": "sonic.sit_chair",
+                        "pre_roll_s": float(payload.get("pre_roll_s", 3.0)),
+                        "post_roll_s": float(payload.get("post_roll_s", 3.0)),
+                        "target_fps": float(payload.get("target_fps", 50.0)),
+                        "checkpoint": str(
+                            payload.get(
+                                "checkpoint",
+                                "policy/facee_v73_noheight/model",
+                            )
+                        ),
+                        "observation_config": str(
+                            payload.get(
+                                "observation_config",
+                                "policy/facee_v73_noheight/observation_config.yaml",
+                            )
+                        ),
+                    }
+                )
+            return response
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error_message": str(exc),
+                "diagnostic": "sonic.sit_chair_preflight",
+                "motion_commanded": False,
+            }
+
+    def analyze_sit_chair_rollout(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Analyze an exported rollout without commanding the runtime."""
+        if self.rollout_recorder is None:
+            return self._rollout_unavailable()
+        try:
+            session_dir = select_rollout_session(
+                self.rollout_recorder.output_root,
+                payload.get("session_id"),
+            )
+            return analyze_rollout(session_dir)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error_message": str(exc),
+                "diagnostic": "sonic.sit_chair_rollout_analysis",
+            }
 
     def halt(self) -> RuntimeHealth:
         assert self.executor is not None

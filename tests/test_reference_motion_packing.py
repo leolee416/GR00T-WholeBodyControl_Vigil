@@ -9,7 +9,11 @@ import numpy as np
 import pytest
 
 from gear_sonic.vigil_bridge.chair_motion_catalog import ChairMotionCatalog
-from gear_sonic.vigil_bridge.mujoco_adapter import HEADER_SIZE, PackedPublisher
+from gear_sonic.vigil_bridge.mujoco_adapter import (
+    HEADER_SIZE,
+    STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES,
+    PackedPublisher,
+)
 
 
 def test_reference_message_uses_cpp_protocol_v1_fields() -> None:
@@ -23,7 +27,10 @@ def test_reference_message_uses_cpp_protocol_v1_fields() -> None:
     publisher.send_reference_motion(ChairMotionCatalog().load(2.00).frames)
     assert captured["topic"] == "pose"
     assert captured["header"]["v"] == 1
-    assert captured["header"]["count"] == 650
+    source_frames = ChairMotionCatalog().load(2.00).frames
+    source_count = len(source_frames["joint_pos"])
+    transmitted_count = source_count + STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES
+    assert captured["header"]["count"] == transmitted_count
     assert [field["name"] for field in captured["header"]["fields"]] == [
         "joint_pos",
         "joint_vel",
@@ -34,18 +41,33 @@ def test_reference_message_uses_cpp_protocol_v1_fields() -> None:
         "catch_up",
     ]
     assert len(json.dumps(captured["header"]).encode()) < HEADER_SIZE
-    expected_bytes = 650 * 29 * 4 * 2 + 650 * 4 * 4 + 4 + 4 + 650 * 8 + 1
+    expected_bytes = (
+        transmitted_count * 29 * 4 * 2
+        + transmitted_count * 4 * 4
+        + 4
+        + 4
+        + transmitted_count * 8
+        + 1
+    )
     assert len(captured["data"]) == expected_bytes
 
-    motion = ChairMotionCatalog().load(2.00)
-    q_count = 650 * 29
-    q_bytes = q_count * np.dtype("<f4").itemsize
-    wire_q = np.frombuffer(captured["data"][:q_bytes], dtype="<f4").reshape(650, 29)
-    wire_dq = np.frombuffer(
-        captured["data"][q_bytes : 2 * q_bytes], dtype="<f4"
-    ).reshape(650, 29)
-    assert np.array_equal(wire_q, motion.frames["joint_pos"])
-    assert np.array_equal(wire_dq, motion.frames["joint_vel"])
+    joint_position_bytes = transmitted_count * 29 * 4
+    joint_position = np.frombuffer(
+        captured["data"], dtype="<f4", count=transmitted_count * 29
+    ).reshape(transmitted_count, 29)
+    assert np.array_equal(joint_position[:source_count], source_frames["joint_pos"])
+    assert np.all(
+        joint_position[-STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES :]
+        == source_frames["joint_pos"][-1]
+    )
+    joint_velocity = np.frombuffer(
+        captured["data"],
+        dtype="<f4",
+        count=transmitted_count * 29,
+        offset=joint_position_bytes,
+    ).reshape(transmitted_count, 29)
+    assert np.array_equal(joint_velocity[:source_count], source_frames["joint_vel"])
+    assert np.all(joint_velocity[-STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES :] == 0.0)
 
 
 @pytest.mark.parametrize(
@@ -87,20 +109,31 @@ def test_cpp_motion_sequence_observation_matches_wire_payload(tmp_path: Path) ->
 
     repo_root = Path(__file__).resolve().parents[1]
     source = repo_root / "tests/cpp/facee_motion_sequence_parity.cpp"
-    include = (
-        repo_root
-        / "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include"
-    )
+    include = repo_root / "gear_sonic_deploy/src/g1/g1_deploy_onnx_ref/include"
     executable = tmp_path / "facee_motion_sequence_parity"
     subprocess.run(
-        [compiler, "-std=c++17", "-O2", "-I", str(include), str(source), "-o", str(executable)],
+        [
+            compiler,
+            "-std=c++17",
+            "-O2",
+            "-I",
+            str(include),
+            str(source),
+            "-o",
+            str(executable),
+        ],
         check=True,
         capture_output=True,
         text=True,
     )
     gathered_path = tmp_path / "gathered_580.bin"
     subprocess.run(
-        [str(executable), str(payload), str(gathered_path), "650"],
+        [
+            str(executable),
+            str(payload),
+            str(gathered_path),
+            str(captured["header"]["count"]),
+        ],
         check=True,
         capture_output=True,
         text=True,
