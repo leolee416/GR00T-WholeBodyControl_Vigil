@@ -52,6 +52,18 @@ Actor 输入只有 reference motion 和本体状态；没有 `height_map_z_flat`
 已有的 observation 名称，启用项总计严格为 1751 维；decoder 为 64 维 token
 加 930 维本体历史，总计 994 维。
 
+这里部署的是一个共享 actor：只有一对 encoder/decoder，不包含 v119 的三路
+expert bank、距离 selector 或距离条件路由。距离只用于在 actor 外部从 motion
+catalog 选择对应的 reference；选定后，所有距离都经过完全相同的 v73 actor。
+`encoder_mode_4` 是官方 universal encoder 用于区分 `g1`/`teleop`/`smpl`
+输入模态的 token，不是椅距 selector。
+
+同一份无 selector ONNX 包同步到：
+
+```text
+oss://xrobot-data/fs/r2s_ego_exp/GR00T-WholeBodyControl_Vigil/policy/facee_v73_noheight/
+```
+
 PyTorch/ONNX 同输入校验结果：
 
 - encoder 最大绝对误差 0；

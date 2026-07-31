@@ -24,6 +24,27 @@ def test_noheight_policy_manifest_has_expected_actor_contract() -> None:
     assert manifest["models"]["decoder"]["input_shape"] == [1, 994]
     assert manifest["pytorch_onnx_parity"]["encoder"]["allclose"] is True
     assert manifest["pytorch_onnx_parity"]["decoder"]["allclose"] is True
+    assert manifest["architecture"] == {
+        "actor_count": 1,
+        "encoder_count": 1,
+        "decoder_count": 1,
+        "distance_expert_selector": False,
+        "distance_conditioned_routing": False,
+        "shared_actor_for_all_reference_motions": True,
+        "reference_selection": "external_motion_catalog",
+        "encoder_mode_4_semantics": (
+            "input_modality_token_g1_teleop_smpl_not_distance"
+        ),
+    }
+
+
+def test_noheight_policy_package_has_one_actor_pair_and_no_expert_bank() -> None:
+    assert sorted(path.name for path in POLICY_DIR.glob("*.onnx")) == [
+        "model_decoder.onnx",
+        "model_encoder.onnx",
+    ]
+    assert not list(POLICY_DIR.glob("*selector*"))
+    assert not list(POLICY_DIR.glob("*expert*"))
 
 
 def test_noheight_observation_config_matches_cpp_deploy_registry_layout() -> None:

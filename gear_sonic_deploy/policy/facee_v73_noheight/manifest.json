@@ -11,6 +11,16 @@
     "chair_relative_position": false,
     "chair_relative_orientation": false
   },
+  "architecture": {
+    "actor_count": 1,
+    "encoder_count": 1,
+    "decoder_count": 1,
+    "distance_expert_selector": false,
+    "distance_conditioned_routing": false,
+    "shared_actor_for_all_reference_motions": true,
+    "reference_selection": "external_motion_catalog",
+    "encoder_mode_4_semantics": "input_modality_token_g1_teleop_smpl_not_distance"
+  },
   "models": {
     "encoder": {
       "input_name": "obs_dict",
@@ -88,6 +98,9 @@
     }
   },
   "motion_catalog": "gear_sonic/vigil_bridge/data/facee_chair_13s/manifest.json",
+  "distribution": {
+    "oss_prefix": "oss://xrobot-data/fs/r2s_ego_exp/GR00T-WholeBodyControl_Vigil/policy/facee_v73_noheight/"
+  },
   "acceptance": {
     "strict_tracking_successes": 16,
     "task_level_acceptances": 2,
