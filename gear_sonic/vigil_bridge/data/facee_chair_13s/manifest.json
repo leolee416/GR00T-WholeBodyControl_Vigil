@@ -1,22 +1,25 @@
 {
   "schema_version": 1,
-  "name": "faceE_v73_noheight_task_accept_real_bridge",
+  "name": "faceE_v73_noheight_user_selected_real_bridge",
   "source_results": "out/faceE_all_success_hold13_selected_v64/results.json",
   "source_results_sha256": "37459f5e8b8de588b2d0062316c4a3ce6d07706273473d98841c1999563b12a6",
   "deployment_decision": "out/faceE_sonic_v1_1_noheight_v65/deployment_candidate_v73_task_accept_20260730.json",
   "deployment_decision_sha256": "46175cc5c5b835424ed4482cb399be00df33d75c382c72c26fb6770ca79c5bc1",
+  "reference_selection_decision": "out/faceE_sonic_v1_1_noheight_v65/deployment_candidate_v73_crossdistance_reference_selection_20260731.json",
+  "reference_selection_decision_sha256": "eded6183376ff078631ef165247957460226e8a61349237ada74ed7016ba632e",
   "policy_checkpoint": "out/faceE_sonic_v1_1_noheight_v65/dagger_v69iter100_balanced_freezeenc_fixedlr2e6_30iter_v73/model_step_000025.pt",
   "policy_checkpoint_sha256": "610bc1bd21e30ca9dd9690a5096ddf3f54ca7b3fe7fb3ddf3ed73c65ead049c9",
   "policy_observation_contract": "reference_motion_plus_proprioception_no_height_map_no_chair_pose",
-  "strict_tracking_successes": 16,
-  "task_level_acceptances": 2,
-  "construction": "Gear-SONIC Humanoid_Batch FK with the source FPS and target_fps=50; joint positions/velocities plus root quaternion are serialized for ZMQ streamed-motion protocol v1. d1.35/d1.40 reuse the exact d1.45 robot reference under the user-approved task-level acceptance.",
+  "strict_tracking_successes": 15,
+  "task_level_acceptances": 3,
+  "construction": "Gear-SONIC Humanoid_Batch FK with the source FPS and target_fps=50; joint positions/velocities plus root quaternion are serialized for ZMQ streamed-motion protocol v1. d1.35/d1.40 reuse the exact d1.45 robot reference. d1.55 reuses d1.70 and d1.65 reuses d1.80 after user review of independent Isaac/MuJoCo cross-distance rollouts. Task-level acceptance does not overwrite raw strict failures.",
   "selection_policy": "ceil measured distance to the next available 0.05 m reference; measured range [1.10, 2.00] m",
   "count": 18,
   "motions": [
     {
       "tag": "d1p15",
       "distance_m": 1.15,
+      "reference_distance_m": 1.15,
       "motion_name": "faceE_optimized_grounded_d1p15m_hold13s_v61",
       "file": "d1p15.npz",
       "sha256": "4feee4f3787b00472591856693cbf26dc751a7b25d2d113bb04a2f972b807f4e",
@@ -31,11 +34,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p20",
       "distance_m": 1.2,
+      "reference_distance_m": 1.2,
       "motion_name": "faceE_optimized_grounded_d1p20m_hold13s_v61",
       "file": "d1p20.npz",
       "sha256": "4feee4f3787b00472591856693cbf26dc751a7b25d2d113bb04a2f972b807f4e",
@@ -50,11 +58,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p25",
       "distance_m": 1.25,
+      "reference_distance_m": 1.25,
       "motion_name": "faceE_optimized_grounded_d1p25m_hold13s_v61",
       "file": "d1p25.npz",
       "sha256": "4feee4f3787b00472591856693cbf26dc751a7b25d2d113bb04a2f972b807f4e",
@@ -69,11 +82,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p30",
       "distance_m": 1.3,
+      "reference_distance_m": 1.3,
       "motion_name": "faceE_backless_d1p30m_hold13s_runtime50_v62",
       "file": "d1p30.npz",
       "sha256": "37aa46674ca005bd10b762aa97ce724a95c6a841ac232d22f79d100c0972a2a4",
@@ -88,11 +106,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p35",
       "distance_m": 1.35,
+      "reference_distance_m": 1.45,
       "motion_name": "faceE_refd1p45_chaird1p35_noheight_v79",
       "file": "d1p35.npz",
       "sha256": "2b1ec414e10a00bb9f3a8bbf729e5695c431d97d309992ee2041bfdcef4683a1",
@@ -107,11 +130,16 @@
       "strict_tracking_status": "FAIL",
       "strict_tracking_progress": 0.751,
       "strict_tracking_reason": "anchor_ori_full",
-      "reuses_reference_tag": "d1p45"
+      "reuses_reference_tag": "d1p45",
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p40",
       "distance_m": 1.4,
+      "reference_distance_m": 1.45,
       "motion_name": "faceE_refd1p45_chaird1p40_noheight_v79",
       "file": "d1p40.npz",
       "sha256": "2b1ec414e10a00bb9f3a8bbf729e5695c431d97d309992ee2041bfdcef4683a1",
@@ -126,11 +154,16 @@
       "strict_tracking_status": "FAIL",
       "strict_tracking_progress": 0.758,
       "strict_tracking_reason": "anchor_ori_full",
-      "reuses_reference_tag": "d1p45"
+      "reuses_reference_tag": "d1p45",
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p45",
       "distance_m": 1.45,
+      "reference_distance_m": 1.45,
       "motion_name": "faceE_refd1p50_chaird1p45_v49_hold13s_v61",
       "file": "d1p45.npz",
       "sha256": "2b1ec414e10a00bb9f3a8bbf729e5695c431d97d309992ee2041bfdcef4683a1",
@@ -145,11 +178,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p50",
       "distance_m": 1.5,
+      "reference_distance_m": 1.5,
       "motion_name": "faceE_backless_longwalk_d1p50m_hold13s_v61",
       "file": "d1p50.npz",
       "sha256": "2b1ec414e10a00bb9f3a8bbf729e5695c431d97d309992ee2041bfdcef4683a1",
@@ -164,30 +202,40 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p55",
       "distance_m": 1.55,
-      "motion_name": "faceE_refd1p60_chaird1p55_v49_hold13s_v61",
+      "reference_distance_m": 1.7,
+      "motion_name": "faceE_ref1p70_chair1p55_v121",
       "file": "d1p55.npz",
-      "sha256": "7f51dd5a4381b4c112aaa16416f2e01aeaaea5d063b829f19f993198bdb155d2",
+      "sha256": "9309af1078e3a43a61e689c2dc8f84535a5b0b7e01baf6f16f868c32fd60982e",
       "fps": 50,
       "frames": 650,
       "duration_s": 13.0,
       "encode_mode": 0,
-      "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p55",
-      "source_motion_key": "faceE_refd1p60_chaird1p55_v49_hold13s_v61",
-      "source_robot_pkl_sha256": "b1be1a5c43007abc402356d9f679f8d555071a2ae6a1019f6fadbfa8436dc714",
+      "source_motion_library": "data/motion_lib/sitting_faceE_v73_crossdistance_chaircloser/ref1p70_chair1p55",
+      "source_motion_key": "faceE_ref1p70_chair1p55_v121",
+      "source_robot_pkl_sha256": "807175fa54568923e8c43cfe4110b823d2a73c69f98d291efe316396736ab74c",
       "task_level_status": "STRICT_TRACKING_OK",
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": "d1p70",
+      "supersedes_motion_key": "faceE_refd1p60_chaird1p55_v49_hold13s_v61",
+      "mujoco_task_level_status": "PASS",
+      "mujoco_strict_status": "PASS",
+      "mujoco_strict_reason": ""
     },
     {
       "tag": "d1p60",
       "distance_m": 1.6,
+      "reference_distance_m": 1.6,
       "motion_name": "faceE_backless_longwalk_d1p60m_hold13s_v61",
       "file": "d1p60.npz",
       "sha256": "7f51dd5a4381b4c112aaa16416f2e01aeaaea5d063b829f19f993198bdb155d2",
@@ -202,30 +250,40 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p65",
       "distance_m": 1.65,
-      "motion_name": "faceE_refd1p75_chaird1p65_v51_hold13s_v61",
+      "reference_distance_m": 1.8,
+      "motion_name": "faceE_ref1p80_chair1p65_v121",
       "file": "d1p65.npz",
-      "sha256": "9309af1078e3a43a61e689c2dc8f84535a5b0b7e01baf6f16f868c32fd60982e",
+      "sha256": "2c250f4ca425aefc8c19ad5632ada6b892c2fe13172222c1054f25869bb7d873",
       "fps": 50,
       "frames": 650,
       "duration_s": 13.0,
       "encode_mode": 0,
-      "source_motion_library": "data/motion_lib/sitting_faceE_all_success_hold13_v61/d1p65",
-      "source_motion_key": "faceE_refd1p75_chaird1p65_v51_hold13s_v61",
-      "source_robot_pkl_sha256": "3aef7293ca18750793d21af175632bdead0a0d5c550dc7aeb9c543958a75b8f8",
-      "task_level_status": "STRICT_TRACKING_OK",
-      "strict_tracking_status": "OK",
-      "strict_tracking_progress": 1.0,
-      "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "source_motion_library": "data/motion_lib/sitting_faceE_v73_crossdistance_chaircloser/ref1p80_chair1p65",
+      "source_motion_key": "faceE_ref1p80_chair1p65_v121",
+      "source_robot_pkl_sha256": "00dcd0c738de73dd2818050d38021f0cf78d57781313622886261c756f69be87",
+      "task_level_status": "ACCEPT",
+      "strict_tracking_status": "FAIL",
+      "strict_tracking_progress": 0.678,
+      "strict_tracking_reason": "ee_body_pos",
+      "reuses_reference_tag": "d1p80",
+      "supersedes_motion_key": "faceE_refd1p75_chaird1p65_v51_hold13s_v61",
+      "mujoco_task_level_status": "USER_ACCEPT",
+      "mujoco_strict_status": "FAIL",
+      "mujoco_strict_reason": "joint_limits_not_exceeded: waist_pitch_joint minimum margin -0.0036622956 rad"
     },
     {
       "tag": "d1p70",
       "distance_m": 1.7,
+      "reference_distance_m": 1.7,
       "motion_name": "faceE_refd1p75_chaird1p70_v51_hold13s_v61",
       "file": "d1p70.npz",
       "sha256": "9309af1078e3a43a61e689c2dc8f84535a5b0b7e01baf6f16f868c32fd60982e",
@@ -240,11 +298,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p75",
       "distance_m": 1.75,
+      "reference_distance_m": 1.75,
       "motion_name": "faceE_backless_longwalk_d1p75m_hold13s_v61",
       "file": "d1p75.npz",
       "sha256": "9309af1078e3a43a61e689c2dc8f84535a5b0b7e01baf6f16f868c32fd60982e",
@@ -259,11 +322,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p80",
       "distance_m": 1.8,
+      "reference_distance_m": 1.8,
       "motion_name": "faceE_d1p90_terminal_contact_repair_chair_d1p80_v59_hold13s_runtime50_v63",
       "file": "d1p80.npz",
       "sha256": "2c250f4ca425aefc8c19ad5632ada6b892c2fe13172222c1054f25869bb7d873",
@@ -278,11 +346,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p85",
       "distance_m": 1.85,
+      "reference_distance_m": 1.85,
       "motion_name": "faceE_d1p90_terminal_contact_repair_chair_d1p85_v59_hold13s_v61",
       "file": "d1p85.npz",
       "sha256": "65fa7bde5f2ed55c4912ceebfee56222f7cd61f056997dd660d083530e309ecf",
@@ -297,11 +370,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p90",
       "distance_m": 1.9,
+      "reference_distance_m": 1.9,
       "motion_name": "faceE_d1p75_gait_to_d1p90_c39_67_hold13s_v61",
       "file": "d1p90.npz",
       "sha256": "a0fcf86c656044e46a915be0217f54f09e8cf58b981efdd855f9b57516885c09",
@@ -316,11 +394,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d1p95",
       "distance_m": 1.95,
+      "reference_distance_m": 1.95,
       "motion_name": "faceE_d1p75_gait_to_d1p95_c39_67_hold13s_v61",
       "file": "d1p95.npz",
       "sha256": "a0fcf86c656044e46a915be0217f54f09e8cf58b981efdd855f9b57516885c09",
@@ -335,11 +418,16 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     },
     {
       "tag": "d2p00",
       "distance_m": 2.0,
+      "reference_distance_m": 2.0,
       "motion_name": "faceE_d1p75_gait_to_d2p00_c39_67_hold13s_v61",
       "file": "d2p00.npz",
       "sha256": "a0fcf86c656044e46a915be0217f54f09e8cf58b981efdd855f9b57516885c09",
@@ -354,7 +442,11 @@
       "strict_tracking_status": "OK",
       "strict_tracking_progress": 1.0,
       "strict_tracking_reason": "",
-      "reuses_reference_tag": null
+      "reuses_reference_tag": null,
+      "supersedes_motion_key": null,
+      "mujoco_task_level_status": null,
+      "mujoco_strict_status": null,
+      "mujoco_strict_reason": null
     }
   ]
 }

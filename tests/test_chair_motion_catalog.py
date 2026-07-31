@@ -28,26 +28,41 @@ def test_official_catalog_is_exact_18_distance_grid() -> None:
         assert motion.duration_s == 13.0
 
 
-def test_task_accepted_d135_d140_exactly_reuse_d145_reference() -> None:
+def test_user_selected_reference_reuse_and_audit_status() -> None:
     catalog = ChairMotionCatalog()
     d145 = catalog.load(1.45)
     for distance in (1.35, 1.40):
         motion = catalog.load(distance)
         for field in ("joint_pos", "joint_vel", "body_quat_w"):
             assert np.array_equal(motion.frames[field], d145.frames[field])
+    for target, donor in ((1.55, 1.70), (1.65, 1.80)):
+        motion = catalog.load(target)
+        donor_motion = catalog.load(donor)
+        for field in ("joint_pos", "joint_vel", "body_quat_w"):
+            assert np.array_equal(motion.frames[field], donor_motion.frames[field])
 
     manifest = json.loads(DEFAULT_CATALOG.read_text(encoding="utf-8"))
     rows = {row["tag"]: row for row in manifest["motions"]}
     assert manifest["policy_observation_contract"].endswith(
         "no_height_map_no_chair_pose"
     )
-    assert manifest["strict_tracking_successes"] == 16
-    assert manifest["task_level_acceptances"] == 2
+    assert manifest["strict_tracking_successes"] == 15
+    assert manifest["task_level_acceptances"] == 3
     for tag in ("d1p35", "d1p40"):
         assert rows[tag]["task_level_status"] == "ACCEPT"
         assert rows[tag]["strict_tracking_status"] == "FAIL"
         assert rows[tag]["strict_tracking_reason"] == "anchor_ori_full"
         assert rows[tag]["reuses_reference_tag"] == "d1p45"
+    assert rows["d1p55"]["task_level_status"] == "STRICT_TRACKING_OK"
+    assert rows["d1p55"]["strict_tracking_status"] == "OK"
+    assert rows["d1p55"]["reuses_reference_tag"] == "d1p70"
+    assert rows["d1p55"]["mujoco_strict_status"] == "PASS"
+    assert rows["d1p65"]["task_level_status"] == "ACCEPT"
+    assert rows["d1p65"]["strict_tracking_status"] == "FAIL"
+    assert rows["d1p65"]["strict_tracking_reason"] == "ee_body_pos"
+    assert rows["d1p65"]["reuses_reference_tag"] == "d1p80"
+    assert rows["d1p65"]["mujoco_task_level_status"] == "USER_ACCEPT"
+    assert rows["d1p65"]["mujoco_strict_status"] == "FAIL"
 
 
 @pytest.mark.parametrize(

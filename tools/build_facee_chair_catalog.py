@@ -3,8 +3,10 @@
 
 This is an offline packaging tool.  Run it with the restored GRAIL Sonic
 environment; the real-robot bridge itself only needs NumPy and the generated
-manifest/NPZ files.  The 16 strict-success motions come from the v64 selection;
-d1.35/d1.40 are deliberately overridden by the task-accepted d1.45 reference.
+manifest/NPZ files.  Most motions come from the v64 selection.  User-reviewed
+cross-distance experiments deliberately replace d1.55 with the d1.70 robot
+reference and d1.65 with the d1.80 robot reference.  Raw strict failures remain
+recorded separately from task-level acceptance.
 """
 
 from __future__ import annotations
@@ -28,7 +30,12 @@ DEPLOYMENT_DECISION = (
     "out/faceE_sonic_v1_1_noheight_v65/"
     "deployment_candidate_v73_task_accept_20260730.json"
 )
+REFERENCE_SELECTION_DECISION = (
+    "out/faceE_sonic_v1_1_noheight_v65/"
+    "deployment_candidate_v73_crossdistance_reference_selection_20260731.json"
+)
 TASK_ACCEPT_TAGS = {"d1p35", "d1p40"}
+REFERENCE_REPLACEMENT_TAGS = {"d1p55", "d1p65"}
 
 
 def sha256(path: Path) -> str:
@@ -54,11 +61,25 @@ def main() -> None:
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
     deployment_path = grail_root / DEPLOYMENT_DECISION
     deployment = json.loads(deployment_path.read_text(encoding="utf-8"))
+    replacement_path = grail_root / REFERENCE_SELECTION_DECISION
+    replacement = json.loads(replacement_path.read_text(encoding="utf-8"))
     checkpoint_path = Path(deployment["checkpoint"]).resolve()
     if not checkpoint_path.is_relative_to(grail_root):
         raise ValueError("deployment checkpoint must be inside --grail-root")
     if sha256(checkpoint_path) != deployment["checkpoint_sha256"]:
         raise ValueError("deployment checkpoint checksum mismatch")
+    if replacement["checkpoint_sha256"] != deployment["checkpoint_sha256"]:
+        raise ValueError("replacement decision checkpoint does not match deployment")
+    if (
+        replacement["actor_observation_contract"]
+        != deployment["actor_observation_contract"]
+    ):
+        raise ValueError("replacement decision observation contract mismatch")
+    evidence_results = (
+        Path(replacement["evidence_directory"]).resolve() / "results.json"
+    )
+    if sha256(evidence_results) != replacement["evidence_results_sha256"]:
+        raise ValueError("replacement decision evidence checksum mismatch")
     deployment_rows = {
         f"d{float(row['distance_m']):.2f}".replace(".", "p"): row
         for row in deployment["rows"]
@@ -67,6 +88,16 @@ def main() -> None:
         raise ValueError(
             f"deployment decision must override {sorted(TASK_ACCEPT_TAGS)}, "
             f"got {sorted(deployment_rows)}"
+        )
+    replacement_rows = {
+        f"d{float(row['distance_m']):.2f}".replace(".", "p"): row
+        for row in replacement["rows"]
+    }
+    if set(replacement_rows) != REFERENCE_REPLACEMENT_TAGS:
+        raise ValueError(
+            "replacement decision must override "
+            f"{sorted(REFERENCE_REPLACEMENT_TAGS)}, "
+            f"got {sorted(replacement_rows)}"
         )
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -87,8 +118,8 @@ def main() -> None:
     generated: dict[str, dict[str, np.ndarray]] = {}
     for item in selection["results"]:
         tag = item["tag"]
-        deployment_row = deployment_rows.get(tag)
-        if deployment_row is None:
+        override_row = replacement_rows.get(tag) or deployment_rows.get(tag)
+        if override_row is None:
             source_path = (
                 grail_root
                 / item["motion_library"]
@@ -102,19 +133,35 @@ def main() -> None:
             strict_tracking_progress = 1.0
             strict_tracking_reason = ""
             reuses_reference_tag = None
+            reference_distance_m = float(item["distance_m"])
+            supersedes_motion_key = None
+            mujoco_task_level_status = None
+            mujoco_strict_status = None
+            mujoco_strict_reason = None
         else:
-            source_path = Path(deployment_row["robot_reference"]).resolve()
+            source_path = Path(override_row["robot_reference"]).resolve()
             if not source_path.is_relative_to(grail_root):
                 raise ValueError(f"{tag}: robot reference must be inside --grail-root")
-            if sha256(source_path) != deployment_row["robot_reference_sha256"]:
-                raise ValueError(f"{tag}: deployment robot reference checksum mismatch")
-            motion_key = deployment_row["motion_key"]
+            if sha256(source_path) != override_row["robot_reference_sha256"]:
+                raise ValueError(f"{tag}: selected robot reference checksum mismatch")
+            motion_key = override_row["motion_key"]
             source_motion_library = str(source_path.parent.parent.relative_to(grail_root))
-            task_level_status = deployment_row["task_level_status"]
-            strict_tracking_status = deployment_row["strict_tracking_status"]
-            strict_tracking_progress = float(deployment_row["strict_progress"])
-            strict_tracking_reason = deployment_row["strict_reason"]
-            reuses_reference_tag = "d1p45"
+            task_level_status = override_row["task_level_status"]
+            strict_tracking_status = override_row["strict_tracking_status"]
+            strict_tracking_progress = float(override_row["strict_progress"])
+            strict_tracking_reason = override_row["strict_reason"]
+            if tag in replacement_rows:
+                reference_distance_m = float(override_row["reference_distance_m"])
+                reuses_reference_tag = (
+                    f"d{reference_distance_m:.2f}".replace(".", "p")
+                )
+            else:
+                reference_distance_m = 1.45
+                reuses_reference_tag = "d1p45"
+            supersedes_motion_key = override_row.get("supersedes_motion_key")
+            mujoco_task_level_status = override_row.get("mujoco_task_level_status")
+            mujoco_strict_status = override_row.get("mujoco_strict_status")
+            mujoco_strict_reason = override_row.get("mujoco_strict_reason")
 
         source = joblib.load(source_path)[motion_key]
         pose = torch.as_tensor(source["pose_aa"]).float().unsqueeze(0)
@@ -153,6 +200,7 @@ def main() -> None:
             {
                 "tag": tag,
                 "distance_m": float(item["distance_m"]),
+                "reference_distance_m": reference_distance_m,
                 "motion_name": motion_key,
                 "file": motion_file.name,
                 "sha256": sha256(motion_file),
@@ -168,6 +216,10 @@ def main() -> None:
                 "strict_tracking_progress": strict_tracking_progress,
                 "strict_tracking_reason": strict_tracking_reason,
                 "reuses_reference_tag": reuses_reference_tag,
+                "supersedes_motion_key": supersedes_motion_key,
+                "mujoco_task_level_status": mujoco_task_level_status,
+                "mujoco_strict_status": mujoco_strict_status,
+                "mujoco_strict_reason": mujoco_strict_reason,
             }
         )
 
@@ -175,24 +227,38 @@ def main() -> None:
         for field in ("joint_pos", "joint_vel", "body_quat_w"):
             if not np.array_equal(generated[tag][field], generated["d1p45"][field]):
                 raise ValueError(f"{tag}: {field} must exactly reuse d1p45")
+    for tag, donor_tag in (("d1p55", "d1p70"), ("d1p65", "d1p80")):
+        for field in ("joint_pos", "joint_vel", "body_quat_w"):
+            if not np.array_equal(generated[tag][field], generated[donor_tag][field]):
+                raise ValueError(f"{tag}: {field} must exactly reuse {donor_tag}")
 
     manifest = {
         "schema_version": 1,
-        "name": "faceE_v73_noheight_task_accept_real_bridge",
+        "name": "faceE_v73_noheight_user_selected_real_bridge",
         "source_results": str(selection_path.relative_to(grail_root)),
         "source_results_sha256": sha256(selection_path),
         "deployment_decision": str(deployment_path.relative_to(grail_root)),
         "deployment_decision_sha256": sha256(deployment_path),
+        "reference_selection_decision": str(
+            replacement_path.relative_to(grail_root)
+        ),
+        "reference_selection_decision_sha256": sha256(replacement_path),
         "policy_checkpoint": str(checkpoint_path.relative_to(grail_root)),
         "policy_checkpoint_sha256": deployment["checkpoint_sha256"],
         "policy_observation_contract": deployment["actor_observation_contract"],
-        "strict_tracking_successes": int(deployment["strict_tracking_successes"]),
-        "task_level_acceptances": int(deployment["task_level_acceptances"]),
+        "strict_tracking_successes": int(
+            replacement["strict_tracking_successes_after_replacement"]
+        ),
+        "task_level_acceptances": int(
+            replacement["task_level_acceptances_after_replacement"]
+        ),
         "construction": (
             "Gear-SONIC Humanoid_Batch FK with the source FPS and target_fps=50; "
             "joint positions/velocities plus root quaternion are serialized for "
             "ZMQ streamed-motion protocol v1. d1.35/d1.40 reuse the exact d1.45 "
-            "robot reference under the user-approved task-level acceptance."
+            "robot reference. d1.55 reuses d1.70 and d1.65 reuses d1.80 after "
+            "user review of independent Isaac/MuJoCo cross-distance rollouts. "
+            "Task-level acceptance does not overwrite raw strict failures."
         ),
         "selection_policy": (
             "ceil measured distance to the next available 0.05 m reference; "

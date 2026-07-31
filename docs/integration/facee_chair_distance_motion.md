@@ -8,8 +8,11 @@ v73 策略的 PyTorch→ONNX 导出物，以及 `sonic.sit_chair` 的距离选�
 
 必须区分两层结论：
 
-- Isaac/PhysX：16 条通过严格跟踪验收；1.35 m、1.40 m 两条能够坐上且不摔，
-  由人工按任务完成接受，但严格检查在 `anchor_ori_full` 处失败。
+- 当前 catalog：15 条通过严格跟踪验收；1.35 m、1.40 m 和 1.65 m
+  三条由人工按任务完成接受。1.55 m 已改为 1.70 m robot reference，并在
+  Isaac、MuJoCo 都严格通过；1.65 m 已改为 1.80 m robot reference，
+  MuJoCo 坐稳直立，但 Isaac 在 `ee_body_pos` 提前停止，MuJoCo 还有
+  `waist_pitch_joint` 约 0.0037 rad 的极小越限。
 - MuJoCo 独立筛选：1.35 m、1.40 m 均完整运行到 13 秒并保持座面接触，但末段
   向后躺倒，最终躯干倾角分别为 76.52°、75.29°，且 `waist_pitch_joint`
   越过模型限位约 0.035/0.032 rad。因此 v73 ONNX **未获真机执行授权**。
@@ -99,6 +102,41 @@ Isaac 对比视频在持久目录：
 
 这里的 `task_level_status=ACCEPT` 不应解释成严格 tracking success，更不应解释
 成真机 safety pass。
+
+## 1.55/1.65 m 的 reference 替换
+
+根据 2026-07-31 的跨距离独立复跑和人工视频复核，catalog 不再使用原来的
+1.55/1.65 m reference：
+
+| 目标椅距 | 新 robot reference | 椅子变化 | Isaac | MuJoCo |
+|---:|---:|---:|---|---|
+| 1.55 m | 1.70 m | 向机器人平移 0.15 m | 严格 PASS | 严格 PASS |
+| 1.65 m | 1.80 m | 向机器人平移 0.15 m | FAIL，`ee_body_pos` | 任务成功（人工接受）；严格检查因腰部越限 0.0037 rad FAIL |
+
+这两条的 robot motion 数组与 donor 逐数组相等；只修改 task package 中椅子
+的位置，椅子朝向、几何和 0.41 m 座面高度不变。打包后也强制检查：
+
+```text
+d1p55 joint_pos/joint_vel/body_quat_w == d1p70
+d1p65 joint_pos/joint_vel/body_quat_w == d1p80
+```
+
+选择记录：
+
+```text
+GRAIL/out/faceE_sonic_v1_1_noheight_v65/
+  deployment_candidate_v73_crossdistance_reference_selection_20260731.json
+```
+
+三列视频和原始机器指标：
+
+```text
+/workspace/fangs1@xiaopeng.com/workspace_fs/codex_session_restore/
+  facee_v73_crossdistance_chaircloser_2026-07-31/
+```
+
+1.65 m 的 `task_level_status=ACCEPT` 是本次人工视频复核结论，不会覆盖
+`strict_tracking_status=FAIL`、MuJoCo 关节限位失败或真机安全禁用状态。
 
 ## 距离映射
 
@@ -208,9 +246,12 @@ SHA-256：
 ```
 
 每个距离包含视频、contact sheet、逐帧 CSV、NPZ、`metrics.json` 和运行日志。
-两条均 `completed_reference=true`、末 2 秒座面接触比例为 1.0，且没有
+1.35/1.40 m 两条均 `completed_reference=true`、末 2 秒座面接触比例为 1.0，且没有
 超过 5 N 的自碰；但由于向后躺倒和腰部限位越界，
 `simulation_screen_pass=false`。这是阻止当前模型直接上机的决定性证据。
+
+新替换的 1.55/1.65 m 跨距离证据位于上一节所列目录：1.55 m 在两种仿真器
+严格通过；1.65 m 仅按任务表现接受，仍未通过严格跨仿真安全筛选。
 
 ## 安全边界
 
