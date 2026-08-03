@@ -8,8 +8,13 @@ from typing import Any
 from gear_sonic.vigil_bridge.mujoco_adapter import (
     MujocoBridgeConfig,
     MujocoPrimitiveExecutor,
+    MujocoRuntimeClient,
     MujocoSensorProvider,
     create_mujoco_bridge_service,
+)
+from gear_sonic.vigil_bridge.chair_motion_catalog import (
+    ChairMotionCatalog,
+    DEFAULT_CATALOG,
 )
 from gear_sonic.vigil_bridge.service import VigilBridgeService
 
@@ -26,6 +31,7 @@ class FakeMujocoRuntime:
     rotate_completed: bool = True
     moves: list[dict[str, float]] = field(default_factory=list)
     rotates: list[dict[str, float]] = field(default_factory=list)
+    reference_motions: list[dict[str, Any]] = field(default_factory=list)
     robot_state: dict[str, Any] | None = field(
         default_factory=lambda: {
             "state_id": "fake_mujoco_state",
@@ -101,6 +107,29 @@ class FakeMujocoRuntime:
             "motion_result": {
                 "actual_degrees": degrees if self.rotate_completed else 0.0,
                 "final_error_deg": 0.0 if self.rotate_completed else degrees,
+            },
+        }
+
+    def play_sonic_reference_motion(self, payload: dict[str, Any]) -> dict:
+        self.reference_motions.append(payload)
+        frames = payload["frames"]
+        duration_s = float(payload["duration_s"])
+        return {
+            "motion": "sonic_reference_motion",
+            "sonic_input": "reference_motion",
+            "chair_distance_m": float(payload["chair_distance_m"]),
+            "reference_distance_m": float(payload["reference_distance_m"]),
+            "motion_name": str(payload["motion_name"]),
+            "tag": str(payload["tag"]),
+            "duration_s": duration_s,
+            "frame_count": len(frames["joint_pos"]),
+            "completion": {
+                "motion_commanded": True,
+                "completion_source": "reference_dispatched",
+                "capture_timing": "after_dispatch",
+                "settled": False,
+                "duration_s": 0.0,
+                "command_duration_s": duration_s,
             },
         }
 
@@ -309,3 +338,134 @@ def test_mujoco_service_factory_does_not_start_runtime_on_handshake() -> None:
     assert response["runtime_mode"] == "mujoco"
     assert response["capabilities"]["oracle_source"] == "none"
     service.close()
+
+
+def test_mujoco_executor_loads_catalog_and_dispatches_reference() -> None:
+    runtime = FakeMujocoRuntime(
+        config=MujocoBridgeConfig(
+            runtime_mode="mujoco",
+            use_move_model=False,
+            chair_motion_catalog=str(DEFAULT_CATALOG),
+        )
+    )
+    service = _service(runtime)
+
+    response = service.execute_action(
+        {
+            "episode_id": "facee_sim",
+            "step_id": 1,
+            "runtime_mode": "mujoco",
+            "skill_name": "sonic.sit_chair",
+            "arguments": {"chair_distance_m": 1.17},
+            "safety": {},
+        }
+    )
+
+    assert response["ok"] is True
+    assert response["action_status"] == "completed"
+    assert response["executed_arguments"]["reference_distance_m"] == 1.20
+    assert response["executed_arguments"]["frame_count"] == 650
+    assert response["telemetry"]["controller"] == "mujoco_zmq_wbc"
+    assert response["telemetry"]["dry_run"] is False
+    assert response["telemetry"]["completion"] == {
+        "motion_commanded": True,
+        "completion_source": "reference_dispatched",
+        "capture_timing": "after_dispatch",
+        "settled": False,
+        "duration_s": 0.0,
+        "command_duration_s": 13.0,
+    }
+    assert len(runtime.reference_motions) == 1
+    assert runtime.reference_motions[0]["tag"] == "d1p20"
+    assert runtime.reference_motions[0]["frames"]["joint_pos"].shape == (650, 29)
+
+
+def test_mujoco_factory_configures_catalog_without_starting_runtime() -> None:
+    service = create_mujoco_bridge_service(
+        MujocoBridgeConfig(
+            runtime_mode="mujoco",
+            chair_motion_catalog=str(DEFAULT_CATALOG),
+        )
+    )
+    assert isinstance(service.executor.chair_motion_catalog, ChairMotionCatalog)
+    assert service.executor.started is False
+    service.close()
+
+
+def test_mujoco_runtime_reference_uses_command_then_single_pose() -> None:
+    class FakePackedPublisher:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, Any]] = []
+
+        def send_command(
+            self,
+            start: bool,
+            stop: bool,
+            planner: bool = True,
+            pause: bool = False,
+        ) -> None:
+            self.events.append(
+                ("command", {"start": start, "stop": stop, "planner": planner, "pause": pause})
+            )
+
+        def send_reference_motion(self, frames: dict[str, Any]) -> None:
+            self.events.append(("pose", frames))
+
+        def send_planner(self, *args: Any, **kwargs: Any) -> None:
+            self.events.append(("planner", {"args": args, "kwargs": kwargs}))
+
+    config = MujocoBridgeConfig(
+        runtime_mode="mujoco",
+        startup_command_burst_s=0.0,
+        startup_command_period_s=0.01,
+    )
+    runtime = MujocoRuntimeClient(config)
+    publisher = FakePackedPublisher()
+    runtime._publisher = publisher  # type: ignore[assignment]
+    runtime.started = True
+    runtime.latest_state = lambda: None  # type: ignore[method-assign]
+    runtime.wait_for_state = lambda timeout: object()  # type: ignore[method-assign]
+    motion = ChairMotionCatalog().load(1.50)
+
+    telemetry = runtime.play_sonic_reference_motion(
+        {
+            "chair_distance_m": motion.requested_distance_m,
+            "reference_distance_m": motion.reference_distance_m,
+            "motion_name": motion.motion_name,
+            "tag": motion.tag,
+            "duration_s": motion.duration_s,
+            "frames": motion.frames,
+        }
+    )
+
+    event_names = [name for name, _payload in publisher.events]
+    assert event_names.count("pose") == 1
+    pose_index = event_names.index("pose")
+    command_payloads = [payload for name, payload in publisher.events if name == "command"]
+    assert command_payloads
+    streamed_mode_switch = {
+        "start": False,
+        "stop": False,
+        "planner": False,
+        "pause": False,
+    }
+    streamed_start = {
+        "start": True,
+        "stop": False,
+        "planner": False,
+        "pause": False,
+    }
+    assert pose_index > 0
+    command_events_before_pose = [
+        payload for name, payload in publisher.events[:pose_index] if name == "command"
+    ]
+    command_events_after_pose = [
+        payload for name, payload in publisher.events[pose_index + 1 :] if name == "command"
+    ]
+    assert command_events_before_pose
+    assert command_events_after_pose
+    assert all(payload == streamed_mode_switch for payload in command_events_before_pose)
+    assert all(payload == streamed_start for payload in command_events_after_pose)
+    assert all(name != "planner" for name in event_names)
+    assert telemetry["frame_count"] == 650
+    assert telemetry["completion"]["completion_source"] == "reference_dispatched"

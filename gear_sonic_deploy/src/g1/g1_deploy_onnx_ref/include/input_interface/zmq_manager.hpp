@@ -397,6 +397,20 @@ class ZMQManager : public InputInterface {
         return;
       }
 
+      // The command topic is owned by ZMQManager, so a network start request
+      // must be propagated here before delegating to either child mode.  The
+      // planner path historically consumed start_control_ inside
+      // handlePlannerInput(), but streamed-motion mode delegated straight to
+      // ZMQEndpointInterface, whose keyboard-only start flag is independent.
+      // Without this handoff, protocol-v1 poses decode successfully while the
+      // main state machine remains stuck in WAIT_FOR_CONTROL.
+      if (start_control_ && !operator_state.start) {
+        operator_state.start = true;
+        std::lock_guard<std::mutex> lock(current_motion_mutex);
+        operator_state.play = (active_mode_ == ManagedMode::STREAMED_MOTION);
+        reinitialize_heading = true;
+      }
+
       // Delegate based on current mode
       if (active_mode_ == ManagedMode::PLANNER) {
         // Planner mode: handle planner input ourselves

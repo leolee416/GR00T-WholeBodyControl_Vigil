@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "repo_url": "https://github.com/leolee416/GR00T-WholeBodyControl_Vigil",
+  "branch": "r2s_ego_exp_fangs",
+  "head_at_start": "498a53cc8f2bfbf815c97e623fce2fc0ef9de76c",
+  "lifecycle_status": "completed",
+  "result_status": "completed_with_evidence_limits",
+  "phase": 14,
+  "progress_path": "run_progress.md",
+  "primary_report": "docs/integration/facee_e0019_mujoco_sim_validation_workflow.md",
+  "blockers": [],
+  "evidence_limits": [
+    "repository d1p50 is a 13-second task-level physical success, but one waist-pitch sample exceeds the model limit by 0.000285 rad",
+    "repository recorder does not yet retain physics-substep contact forces, so strict pre-seat no-kick acceptance is not claimed"
+  ]
+}

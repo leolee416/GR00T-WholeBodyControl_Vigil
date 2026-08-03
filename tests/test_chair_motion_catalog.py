@@ -9,6 +9,7 @@ import pytest
 from gear_sonic.vigil_bridge.chair_motion_catalog import (
     ChairMotionCatalog,
     DEFAULT_CATALOG,
+    EXACT_V3_CATALOG,
 )
 from gear_sonic.vigil_bridge.primitive_executor import DryRunPrimitiveExecutor
 from gear_sonic.vigil_bridge.real_adapter import (
@@ -37,6 +38,32 @@ def test_official_catalog_is_exact_18_distance_grid() -> None:
     assert manifest["joint_order"] == "isaaclab"
     assert manifest["joint_count"] == 29
     assert manifest["joint_order_mapping"] == "G1_MUJOCO_TO_ISAACLAB_DOF"
+
+
+def test_e0019_exact_v3_catalog_is_complete_and_crosssim_accepted() -> None:
+    catalog = ChairMotionCatalog(EXACT_V3_CATALOG)
+    manifest = json.loads(EXACT_V3_CATALOG.read_text(encoding="utf-8"))
+    assert catalog.distances_m == [value / 100 for value in range(115, 201, 5)]
+    assert manifest["name"] == "faceE_e0019_exact_v3_crosssim_18of18"
+    assert manifest["startup_history"] == "repeat_reset"
+    assert manifest["chair_geometry"]["backrest"] is False
+    assert manifest["chair_geometry"]["width_m"] == 0.5
+    assert manifest["chair_geometry"]["depth_m"] == 0.45
+    assert manifest["chair_geometry"]["seat_height_m"] == 0.41
+    assert manifest["chair_geometry"]["vertices"] == 258
+    assert manifest["chair_geometry"]["triangles"] == 512
+    for distance in catalog.distances_m:
+        motion = catalog.load(distance)
+        assert motion.frames["joint_pos"].shape == (650, 29)
+        record = next(
+            item for item in manifest["motions"] if item["tag"] == motion.tag
+        )
+        assert record["crosssim_acceptance"] == {
+            "isaac_physx_strict": True,
+            "cpu_mujoco_strict": True,
+            "cpu_mujoco_no_preseat_lower_leg_kick": True,
+        }
+        assert record["chair_layout"]["backrest"] is False
 
 
 def test_user_selected_reference_reuse_and_audit_status() -> None:

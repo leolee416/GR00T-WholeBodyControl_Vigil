@@ -3968,6 +3968,17 @@ class G1Deploy {
               warn_count++;
             }
             std::cout << "[Control] DEBUG: operator_state.start=true, transitioning to CONTROL state" << std::endl;
+            // The policy history must not contain stale samples from a prior
+            // CONTROL interval. The first measured state on the next tick is
+            // repeated into the missing slots by StateLogger::GetLatest(),
+            // matching Isaac Lab/MuJoCo repeat_reset startup semantics.
+            if (state_logger_) {
+              state_logger_->ResetHistory();
+            }
+            // PAUSED holds default_angles, whose normalized SONIC action is
+            // zero. Do not repeat a stale pre-pause policy action into the new
+            // history window.
+            last_action.fill(0.0);
             program_state_ = ProgramState::CONTROL;
           }
           break;

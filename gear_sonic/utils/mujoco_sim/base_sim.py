@@ -21,6 +21,14 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize
 
+from gear_sonic.utils.mujoco_sim.facee_chair_scene import (
+    FACEE_DEPLOY_DEFAULT_ANGLES_MUJOCO,
+    compile_facee_scene_model,
+    configure_facee_deploy_reset,
+    configure_facee_reference_reset,
+    is_facee_cpp_init_target,
+    load_facee_chair_layout,
+)
 from gear_sonic.utils.mujoco_sim.metric_utils import check_contact, check_height
 from gear_sonic.utils.mujoco_sim.sim_utils import get_subtree_body_names
 from gear_sonic.utils.mujoco_sim.unitree_sdk2py_bridge import ElasticBand, UnitreeSdk2Bridge
@@ -147,14 +155,37 @@ class DefaultEnv:
     def init_scene(self):
         """Initialize the default robot scene"""
         xml_path = str(pathlib.Path(GEAR_SONIC_ROOT) / self.config["ROBOT_SCENE"])
-        self.mj_model = mujoco.MjModel.from_xml_path(xml_path)
+        self.facee_chair_layout = None
+        facee_distance = self.config.get("FACEE_CHAIR_DISTANCE_M")
+        if facee_distance is not None:
+            self.facee_chair_layout = load_facee_chair_layout(
+                facee_distance,
+                self.config.get("FACEE_CHAIR_CATALOG"),
+                GEAR_SONIC_ROOT,
+            )
+            self.mj_model = compile_facee_scene_model(
+                xml_path,
+                self.facee_chair_layout,
+                preserve_authored_world_frame=self.config.get(
+                    "FACEE_PRESERVE_AUTHORED_WORLD_FRAME", False
+                ),
+            )
+        else:
+            self.mj_model = mujoco.MjModel.from_xml_path(xml_path)
         self.mj_data = mujoco.MjData(self.mj_model)
         self.mj_model.opt.timestep = self.sim_dt
         self.torso_index = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
         self.root_body = "pelvis"
         self.root_body_id = self.mj_model.body(self.root_body).id
 
-        self.joint_class_map = self._get_dof_indices_by_class()
+        # MjSpec.compile() deliberately compiles the FaceE static-chair pose
+        # in memory and therefore does not populate MuJoCo's process-global
+        # "last XML" slot used by this legacy, currently-unused sysid map.
+        # Do not turn a validation-only metadata cache into a launch failure.
+        self.joint_class_map = (
+            {} if self.facee_chair_layout is not None
+            else self._get_dof_indices_by_class()
+        )
 
         self.perform_sysid_search = self.config.get("perform_sysid_search", False)
 
@@ -182,6 +213,7 @@ class DefaultEnv:
                 )
 
         # Enable the elastic band
+        self.elastic_band = None
         if self.config["ENABLE_ELASTIC_BAND"] and self.use_floating_root_link:
             self.elastic_band = ElasticBand()
             if "g1" in self.config["ROBOT_TYPE"]:
@@ -247,6 +279,64 @@ class DefaultEnv:
         self.left_hand_index = np.array(self.left_hand_index)
         self.right_hand_index = np.array(self.right_hand_index)
 
+        self.facee_deploy_reset = None
+        self.facee_reference_reset = None
+        self._facee_initial_body_qpos = None
+        self._policy_control_started = False
+        self._facee_trace_steps_remaining = 0
+        self._facee_last_applied_policy_target = None
+        if (
+            self.config.get("FACEE_INITIALIZE_DEPLOY_STANDING_POSE", False)
+            and self.config.get("FACEE_INITIALIZE_REFERENCE_POSE", False)
+        ):
+            raise ValueError("FaceE deploy-pose and reference-pose resets are exclusive")
+        if self.config.get("FACEE_INITIALIZE_DEPLOY_STANDING_POSE", False):
+            if self.facee_chair_layout is None:
+                raise ValueError(
+                    "FaceE deploy standing reset requires FACEE_CHAIR_DISTANCE_M"
+                )
+            self.facee_deploy_reset = configure_facee_deploy_reset(
+                self.mj_model,
+                self.mj_data,
+                self.body_joint_index,
+                float(self.config.get("FACEE_INITIAL_GROUND_CLEARANCE_M", 0.001)),
+            )
+            print(
+                "[FaceE] deployment reset: "
+                f"root_z={self.facee_deploy_reset.root_height_m:.6f}m, "
+                f"ground_clearance="
+                f"{self.facee_deploy_reset.measured_ground_clearance_m:.6f}m, "
+                f"closest_geom={self.facee_deploy_reset.closest_robot_geom}",
+                flush=True,
+            )
+            self._facee_initial_body_qpos = FACEE_DEPLOY_DEFAULT_ANGLES_MUJOCO.copy()
+        elif self.config.get("FACEE_INITIALIZE_REFERENCE_POSE", False):
+            if self.facee_chair_layout is None:
+                raise ValueError(
+                    "FaceE reference reset requires FACEE_CHAIR_DISTANCE_M"
+                )
+            self.facee_reference_reset = configure_facee_reference_reset(
+                self.mj_model,
+                self.mj_data,
+                self.body_joint_index,
+                self.facee_chair_layout,
+                preserve_authored_world_frame=self.config.get(
+                    "FACEE_PRESERVE_AUTHORED_WORLD_FRAME", False
+                ),
+            )
+            self._facee_initial_body_qpos = np.asarray(
+                self.facee_reference_reset.initial_body_qpos_mujoco,
+                dtype=np.float64,
+            )
+            print(
+                "[FaceE] authored reference reset: "
+                f"tag={self.facee_reference_reset.tag}, "
+                f"root_z={self.facee_reference_reset.root_height_m:.6f}m, "
+                f"authored_world_frame={self.config.get('FACEE_PRESERVE_AUTHORED_WORLD_FRAME', False)}, "
+                f"source={self.facee_reference_reset.source_motion_path}",
+                flush=True,
+            )
+
     def init_renderers(self):
         self.renderers = {}
         for camera_name, camera_config in self.camera_configs.items():
@@ -255,11 +345,44 @@ class DefaultEnv:
             )
             self.renderers[camera_name] = renderer
 
-    def compute_body_torques(self) -> np.ndarray:
+    def _capture_body_motor_command(self) -> dict[str, np.ndarray]:
+        return {
+            field: np.asarray(
+                [
+                    getattr(self.unitree_bridge.low_cmd.motor_cmd[i], field)
+                    for i in range(self.num_body_dof)
+                ],
+                dtype=np.float64,
+            )
+            for field in ("tau", "q", "dq", "kp", "kd")
+        }
+
+    def compute_body_torques(
+        self, command: dict[str, np.ndarray] | None = None
+    ) -> np.ndarray:
         # PD control: tau = tau_ff + kp * (q_des - q) + kd * (dq_des - dq)
         body_torques = np.zeros(self.num_body_dof)
         if self.unitree_bridge is not None and self.unitree_bridge.low_cmd:
             for i in range(self.unitree_bridge.num_body_motor):
+                if command is not None:
+                    body_torques[i] = (
+                        command["tau"][i]
+                        + command["kp"][i]
+                        * (
+                            command["q"][i]
+                            - self.mj_data.qpos[
+                                self.body_joint_index[i] + self.qpos_offset - 1
+                            ]
+                        )
+                        + command["kd"][i]
+                        * (
+                            command["dq"][i]
+                            - self.mj_data.qvel[
+                                self.body_joint_index[i] + self.qvel_offset - 1
+                            ]
+                        )
+                    )
+                    continue
                 if self.unitree_bridge.use_sensor:
                     body_torques[i] = (
                         self.unitree_bridge.low_cmd.motor_cmd[i].tau
@@ -391,6 +514,45 @@ class DefaultEnv:
         self.unitree_bridge.PublishLowState(self.obs)
         if self.unitree_bridge.joystick:
             self.unitree_bridge.PublishWirelessController()
+        if (
+            self.config.get("WAIT_FOR_LOW_CMD_BEFORE_STEP", False)
+            and not self.unitree_bridge.low_cmd_received
+        ):
+            return
+        if (
+            self.config.get("WAIT_FOR_POLICY_CONTROL_BEFORE_STEP", False)
+            and not self._policy_control_started
+        ):
+            if not self.unitree_bridge.low_cmd_received:
+                return
+            target = np.asarray(
+                [
+                    self.unitree_bridge.low_cmd.motor_cmd[i].q
+                    for i in range(self.num_body_dof)
+                ],
+                dtype=np.float64,
+            )
+            if self._facee_initial_body_qpos is not None:
+                if is_facee_cpp_init_target(target, self._facee_initial_body_qpos):
+                    return
+                deviation = float(
+                    np.max(np.abs(target - self._facee_initial_body_qpos))
+                )
+            else:
+                deviation = float(
+                    np.max(np.abs(target - FACEE_DEPLOY_DEFAULT_ANGLES_MUJOCO))
+                )
+                if deviation <= 1e-5:
+                    return
+            self._policy_control_started = True
+            self._facee_trace_steps_remaining = int(
+                self.config.get("FACEE_TRACE_FIRST_PHYSICS_STEPS", 0)
+            )
+            print(
+                "[FaceE] first policy command received; enabling unsupported "
+                f"physics (target max delta={deviation:.6f}rad)",
+                flush=True,
+            )
         if self.elastic_band:
             if self.elastic_band.enable and self.use_floating_root_link:
                 pose = np.concatenate(
@@ -412,8 +574,76 @@ class DefaultEnv:
                 self.mj_data.xfrc_applied[self.band_attached_link] = self.elastic_band.Advance(pose)
             else:
                 self.mj_data.xfrc_applied[self.band_attached_link] = np.zeros(6)
+        lockstep_decimation = int(
+            self.config.get("FACEE_POLICY_LOCKSTEP_DECIMATION", 0)
+        )
+        if lockstep_decimation < 0:
+            raise ValueError("FACEE_POLICY_LOCKSTEP_DECIMATION must be nonnegative")
+        if lockstep_decimation:
+            command = self._capture_body_motor_command()
+            if (
+                self._facee_last_applied_policy_target is not None
+                and np.array_equal(
+                    command["q"], self._facee_last_applied_policy_target
+                )
+            ):
+                # Publish the post-step LowState above, then freeze simulated
+                # time until C++ produces the next 50 Hz actor target.
+                return
+            self._facee_last_applied_policy_target = command["q"].copy()
+            for _ in range(lockstep_decimation):
+                body_torques = self.compute_body_torques(command)
+                self.torques[self.body_joint_index - 1] = body_torques
+                self.torques = np.clip(
+                    self.torques, -self.torque_limit, self.torque_limit
+                )
+                if self.config["FREE_BASE"]:
+                    self.mj_data.ctrl = np.concatenate((np.zeros(6), self.torques))
+                else:
+                    self.mj_data.ctrl = self.torques
+                trace_this_step = self._facee_trace_steps_remaining > 0
+                if trace_this_step:
+                    print(
+                        "[FaceETrace] lockstep-pre "
+                        f"t={self.mj_data.time:.6f} "
+                        f"q={self.mj_data.qpos[self.body_joint_index[:6] + self.qpos_offset - 1].tolist()} "
+                        f"target={command['q'][:6].tolist()} "
+                        f"tau_raw={body_torques[:6].tolist()}",
+                        flush=True,
+                    )
+                mujoco.mj_step(self.mj_model, self.mj_data)
+                if trace_this_step:
+                    print(
+                        "[FaceETrace] lockstep-post "
+                        f"t={self.mj_data.time:.6f} "
+                        f"q={self.mj_data.qpos[self.body_joint_index[:6] + self.qpos_offset - 1].tolist()} "
+                        f"ctrl={self.mj_data.ctrl[:6].tolist()}",
+                        flush=True,
+                    )
+                    self._facee_trace_steps_remaining -= 1
+            self.check_fall()
+            return
+
         body_torques = self.compute_body_torques()
         hand_torques = self.compute_hand_torques()
+        trace_this_step = self._facee_trace_steps_remaining > 0
+        if trace_this_step:
+            target = np.asarray(
+                [
+                    self.unitree_bridge.low_cmd.motor_cmd[i].q
+                    for i in range(self.num_body_dof)
+                ],
+                dtype=np.float64,
+            )
+            print(
+                "[FaceETrace] pre "
+                f"t={self.mj_data.time:.6f} "
+                f"q={self.mj_data.qpos[self.body_joint_index[:6] + self.qpos_offset - 1].tolist()} "
+                f"dq={self.mj_data.qvel[self.body_joint_index[:6] + self.qvel_offset - 1].tolist()} "
+                f"target={target[:6].tolist()} "
+                f"tau_raw={body_torques[:6].tolist()}",
+                flush=True,
+            )
         # -1: actuator array is 0-based while joint indices from the model are 1-based
         self.torques[self.body_joint_index - 1] = body_torques
         if self.num_hand_dof > 0:
@@ -428,6 +658,16 @@ class DefaultEnv:
         else:
             self.mj_data.ctrl = self.torques
         mujoco.mj_step(self.mj_model, self.mj_data)
+
+        if trace_this_step:
+            print(
+                "[FaceETrace] post "
+                f"t={self.mj_data.time:.6f} "
+                f"q={self.mj_data.qpos[self.body_joint_index[:6] + self.qpos_offset - 1].tolist()} "
+                f"ctrl={self.mj_data.ctrl[:6].tolist()}",
+                flush=True,
+            )
+            self._facee_trace_steps_remaining -= 1
 
         self.check_fall()
 
@@ -506,12 +746,12 @@ class DefaultEnv:
             self.apply_perturbation(key)
 
     def check_fall(self):
-        self.fall = False
-        if self.mj_data.qpos[2] < 0.2:
-            self.fall = True
+        was_fallen = getattr(self, "fall", False)
+        self.fall = bool(self.mj_data.qpos[2] < 0.2)
+        if self.fall and not was_fallen:
             print(f"Warning: Robot has fallen, height: {self.mj_data.qpos[2]:.3f} m")
 
-        if self.fall:
+        if self.fall and self.config.get("AUTO_RESET_ON_FALL", True):
             self.reset()
 
     def check_self_collision(self):

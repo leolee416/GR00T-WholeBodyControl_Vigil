@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "name": "faceE_e0019_exact_v3_crosssim_18of18",
+  "source_checkpoint": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0017_mjwarp_shared_ppo/evidence/s0_iter0008_newbest/full_checkpoint/model_step_mjwarp_s0_iter0008.pt",
+  "source_checkpoint_sha256": "3727209b0340fc31c499d1e069386c7e10297fce80adb4f87e9db10e840e7650",
+  "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/taskset_exact_v3_all18.json",
+  "source_taskset_sha256": "35eed93b181ad0c4e1a4fc498f2cd05f99d99ce3e28c2a65ccd9e68819ddba1d",
+  "observation_contract": "reference_motion_plus_proprioception_no_height_map_no_chair_pose",
+  "actor_inputs": {
+    "reference_motion": true,
+    "proprioception": true,
+    "height_map_z_flat": false,
+    "vision": false,
+    "chair_relative_position": false,
+    "chair_relative_orientation": false,
+    "distance_or_reference_selector": false
+  },
+  "architecture": {
+    "actor_count": 1,
+    "encoder_count": 1,
+    "decoder_count": 1,
+    "distance_expert_selector": false,
+    "distance_conditioned_routing": false,
+    "shared_actor_for_all_18_references": true,
+    "network_topology_change_from_v73": false,
+    "encoder_mode_4_semantics": "input modality token g1/teleop/smpl; not a distance selector"
+  },
+  "startup_history": "repeat_reset",
+  "models": {
+    "encoder": {
+      "input_name": "obs_dict",
+      "input_shape": [
+        1,
+        1751
+      ],
+      "output_name": "encoded_tokens",
+      "output_shape": [
+        1,
+        64
+      ],
+      "opset": 13,
+      "node_count": 241,
+      "size_bytes": 50076004,
+      "sha256": "1cf476669348344f9ccda0049fb5b708112bdcada73e9403f227321872e7e459"
+    },
+    "decoder": {
+      "input_name": "obs_dict",
+      "input_shape": [
+        1,
+        994
+      ],
+      "output_name": "action",
+      "output_shape": [
+        1,
+        29
+      ],
+      "opset": 13,
+      "node_count": 48,
+      "size_bytes": 40896074,
+      "sha256": "5464bd07f7877b9c42d38cb2a9fc73ad601b857941604e8d3e372298e67d7382"
+    }
+  },
+  "pytorch_onnx_parity": {
+    "encoder": {
+      "schema_version": 1,
+      "onnx_file": "model_step_000020_encoder.onnx",
+      "provider": "CPUExecutionProvider",
+      "input_name": "obs_dict",
+      "input_shape": [
+        1,
+        1751
+      ],
+      "output_name": "encoded_tokens",
+      "output_shape": [
+        1,
+        64
+      ],
+      "max_abs_error": 0.0,
+      "mean_abs_error": 0.0,
+      "rtol": 0.0001,
+      "atol": 1e-05,
+      "allclose": true
+    },
+    "decoder": {
+      "schema_version": 1,
+      "onnx_file": "model_step_000020_decoder.onnx",
+      "provider": "CPUExecutionProvider",
+      "input_name": "obs_dict",
+      "input_shape": [
+        1,
+        994
+      ],
+      "output_name": "action",
+      "output_shape": [
+        1,
+        29
+      ],
+      "max_abs_error": 1.1920928955078125e-06,
+      "mean_abs_error": 4.882699613517616e-07,
+      "rtol": 0.0001,
+      "atol": 1e-05,
+      "allclose": true
+    }
+  },
+  "observation_config": "observation_config.yaml",
+  "observation_config_sha256": "a88305b8d12994d831a232619bdc64e58a5378840e4054fd2497d9ad7ebdb33a",
+  "motion_catalog": "gear_sonic/vigil_bridge/data/facee_chair_13s_exact_v3/manifest.json",
+  "mujoco_scene": "gear_sonic/data/assets/robot_description/mjcf/scene_facee_training_primitives.xml",
+  "simulation_acceptance": {
+    "isaac_physx_strict": "18/18",
+    "cpu_mujoco_strict": "18/18",
+    "cpu_mujoco_no_preseat_lower_leg_kick": "18/18",
+    "source": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/RESULTS.md"
+  },
+  "deployment_status": {
+    "default_launcher_changed": false,
+    "real_robot_authorized": false,
+    "reason": "This package is an explicit simulation candidate. Repository-mode MuJoCo must be validated separately from the E0019 evaluator."
+  }
+}

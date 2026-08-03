@@ -177,8 +177,20 @@ size_t StateLogger::size() const {
   return size_;
 }
 
+void StateLogger::ResetHistory() {
+  std::lock_guard<std::mutex> lock(ring_mutex_);
+  start_ = 0;
+  size_ = 0;
+}
+
 std::vector<Entry> StateLogger::GetLatest(size_t n, bool newest_first) const {
   std::lock_guard<std::mutex> lock(ring_mutex_);
+  if (size_ == 0) {
+    std::vector<Entry> empty_history;
+    empty_history.reserve(n);
+    for (size_t i = 0; i < n; ++i) { empty_history.push_back(makeZeroEntry_()); }
+    return empty_history;
+  }
   const size_t count = n < size_ ? n : size_;
   std::vector<Entry> out;
   out.reserve(count);
@@ -186,10 +198,14 @@ std::vector<Entry> StateLogger::GetLatest(size_t n, bool newest_first) const {
     size_t idx = (start_ + size_ - 1 - i + capacity_) % capacity_;
     out.push_back(ring_[idx]);
   }
-  // Pad with zeros if requested more than available
+  // Match Isaac Lab CircularBuffer first-push semantics: before a full
+  // history exists, repeat the earliest real sample instead of injecting
+  // synthetic zeros.  On the first CONTROL tick this yields ten copies of
+  // the measured reset state, while last_action is naturally zero-initialized.
   if (out.size() < n) {
     const size_t missing = n - out.size();
-    for (size_t i = 0; i < missing; ++i) { out.push_back(makeZeroEntry_()); }
+    const Entry& earliest = ring_[start_];
+    for (size_t i = 0; i < missing; ++i) { out.push_back(earliest); }
   }
   // Reverse if oldest_first requested
   if (!newest_first) { std::reverse(out.begin(), out.end()); }
@@ -223,10 +239,12 @@ std::vector<Entry> StateLogger::GetLatest(size_t n, double sample_dt_seconds, bo
         const size_t idx = (start_ + size_ - 1 - offset + capacity_) % capacity_;
         out.push_back(ring_[idx]);
       }
-      // Pad with zeros if requested more than available
+      // Repeat the earliest real sample for pre-history, matching Isaac Lab's
+      // first-push fill rather than creating an out-of-distribution zero state.
       if (out.size() < n) {
         const size_t missing = n - out.size();
-        for (size_t k = 0; k < missing; ++k) { out.push_back(makeZeroEntry_()); }
+        const Entry& earliest = ring_[start_];
+        for (size_t k = 0; k < missing; ++k) { out.push_back(earliest); }
       }
       // Reverse if oldest_first requested
       if (!newest_first) { std::reverse(out.begin(), out.end()); }
@@ -254,10 +272,12 @@ std::vector<Entry> StateLogger::GetLatest(size_t n, double sample_dt_seconds, bo
     i = (i + capacity_ - 1) % capacity_;
     scanned += 1;
   }
-  // Pad with zeros if requested more than available
+  // Repeat the earliest real sample when the timestamp scan cannot reach far
+  // enough into pre-history.
   if (out.size() < n) {
     const size_t missing = n - out.size();
-    for (size_t k = 0; k < missing; ++k) { out.push_back(makeZeroEntry_()); }
+    const Entry& earliest = ring_[start_];
+    for (size_t k = 0; k < missing; ++k) { out.push_back(earliest); }
   }
   // Reverse if oldest_first requested
   if (!newest_first) { std::reverse(out.begin(), out.end()); }
@@ -503,4 +523,3 @@ Entry StateLogger::makeZeroEntry_() const {
   e.token_state.clear();
   return e;
 }
-

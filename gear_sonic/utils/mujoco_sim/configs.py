@@ -72,6 +72,22 @@ def override_wbc_config(
         "SIMULATE_DT": 1 / float(config.sim_frequency),
         "ENABLE_OFFSCREEN": config.enable_offscreen,
         "ENABLE_ONSCREEN": config.enable_onscreen,
+        "ENABLE_ELASTIC_BAND": config.enable_elastic_band,
+        "AUTO_RESET_ON_FALL": config.auto_reset_on_fall,
+        "WAIT_FOR_LOW_CMD_BEFORE_STEP": config.wait_for_low_cmd_before_step,
+        "WAIT_FOR_POLICY_CONTROL_BEFORE_STEP": (
+            config.wait_for_policy_control_before_step
+        ),
+        "FACEE_INITIALIZE_DEPLOY_STANDING_POSE": (
+            config.facee_initialize_deploy_standing_pose
+        ),
+        "FACEE_INITIALIZE_REFERENCE_POSE": config.facee_initialize_reference_pose,
+        "FACEE_PRESERVE_AUTHORED_WORLD_FRAME": (
+            config.facee_preserve_authored_world_frame
+        ),
+        "FACEE_INITIAL_GROUND_CLEARANCE_M": config.facee_initial_ground_clearance_m,
+        "FACEE_TRACE_FIRST_PHYSICS_STEPS": config.facee_trace_first_physics_steps,
+        "FACEE_POLICY_LOCKSTEP_DECIMATION": config.facee_policy_lockstep_decimation,
         "model_path": config.wbc_model_path,
         "enable_waist": config.enable_waist,
         "with_hands": config.with_hands,
@@ -90,6 +106,29 @@ def override_wbc_config(
         "hand_torque_limit": config.hand_torque_limit,
         "enable_natural_walk": config.enable_natural_walk,
     }
+
+    if config.robot_scene is not None:
+        key_to_value["ROBOT_SCENE"] = config.robot_scene
+    if config.facee_chair_distance_m is not None:
+        key_to_value["FACEE_CHAIR_DISTANCE_M"] = config.facee_chair_distance_m
+        key_to_value["FACEE_CHAIR_CATALOG"] = config.facee_chair_catalog
+
+    # The FaceE E0019 actor was trained with the 29-DOF g1_model_12 asset.
+    # A no-hand MuJoCo scene therefore needs zero hand channels in the legacy
+    # simulator as well; ``with_hands`` alone is not consumed by BaseSim.
+    if not config.with_hands:
+        key_to_value["NUM_HAND_JOINTS"] = 0
+        key_to_value["NUM_HAND_MOTORS"] = 0
+        # The legacy YAML interleaves 14 dex-hand limits into this array, so
+        # slicing its first 29 entries is wrong.  Use the 29-DOF g1_model_12
+        # effort contract in MuJoCo joint order.
+        key_to_value["motor_effort_limit_list"] = [
+            139.0, 139.0, 88.0, 139.0, 50.0, 50.0,
+            139.0, 139.0, 88.0, 139.0, 50.0, 50.0,
+            88.0, 50.0, 50.0,
+            25.0, 25.0, 25.0, 25.0, 25.0, 5.0, 5.0,
+            25.0, 25.0, 25.0, 25.0, 25.0, 5.0, 5.0,
+        ]
 
     if missed_keys_only:
         for key in key_to_value:
@@ -130,6 +169,17 @@ class BaseConfig(ArgsConfigTemplate):
     simulator: str = "mujoco"
     """Simulator to use."""
 
+    robot_scene: str | None = None
+    """Optional MuJoCo XML override; the WBC YAML default remains unchanged."""
+
+    facee_chair_distance_m: float | None = None
+    """Enable the FaceE chair and select its exact-v3 distance/layout."""
+
+    facee_chair_catalog: str = (
+        "gear_sonic/vigil_bridge/data/facee_chair_13s_exact_v3/manifest.json"
+    )
+    """Catalog whose reference and chair layout must be used as one pair."""
+
     sim_sync_mode: bool = False
     """Whether to run the control loop in sync mode."""
 
@@ -157,6 +207,36 @@ class BaseConfig(ArgsConfigTemplate):
 
     enable_onscreen: bool = True
     """Whether to enable onscreen rendering."""
+
+    enable_elastic_band: bool = True
+    """Apply the interactive pelvis support spring used by legacy demos."""
+
+    auto_reset_on_fall: bool = True
+    """Reset MuJoCo immediately when pelvis height drops below the fall threshold."""
+
+    wait_for_low_cmd_before_step: bool = False
+    """Publish initial state but hold physics until the first rt/lowcmd arrives."""
+
+    wait_for_policy_control_before_step: bool = False
+    """Hold physics through C++ INIT until a non-default policy target arrives."""
+
+    facee_initialize_deploy_standing_pose: bool = False
+    """Reset FaceE MuJoCo to the C++ deployment policy's default joint pose."""
+
+    facee_initialize_reference_pose: bool = False
+    """Reset FaceE MuJoCo to the selected E0019 reference's first frame."""
+
+    facee_preserve_authored_world_frame: bool = False
+    """Keep E0019 root/chair world XY and yaw instead of rebasing to local heading."""
+
+    facee_initial_ground_clearance_m: float = 0.001
+    """Small initial foot/floor clearance used by the FaceE deployment reset."""
+
+    facee_trace_first_physics_steps: int = 0
+    """Diagnostic count of initial unsupported physics steps to print."""
+
+    facee_policy_lockstep_decimation: int = 0
+    """Opt-in policy-command lockstep; 4 means 50 Hz actor to 200 Hz physics."""
 
     enable_teleop_evaluator: bool = False
     """Whether to enable teleop evaluator."""

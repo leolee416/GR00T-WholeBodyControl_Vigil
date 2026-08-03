@@ -34,6 +34,9 @@ This index lists the Codex-facing documentation for this repository.
 - `docs/integration/vigil_bridge_interface.md`  
   Current bridge protocol, capabilities, message shapes, and extension table.
 
+- [FaceE E0019 仓库内 MuJoCo 历史诊断](integration/vigil_mujoco_facee_validation_20260803.md)
+- [FaceE E0019 模型的 MuJoCo Sim 完整验证流程](integration/facee_e0019_mujoco_sim_validation_workflow.md)
+
 - [Vigil Bridge 真机 Rollout 录制与导出](integration/vigil_rollout_recording.md)
 
 - `docs/integration/g1_audio_io.md`

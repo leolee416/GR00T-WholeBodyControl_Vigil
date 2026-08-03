@@ -25,6 +25,7 @@ import threading
 import time
 from typing import Any, Callable, Mapping
 
+from gear_sonic.vigil_bridge.chair_motion_catalog import ChairMotionCatalog
 from gear_sonic.vigil_bridge.primitive_executor import DryRunPrimitiveExecutor
 from gear_sonic.vigil_bridge.protocol import (
     ExecuteActionResponse,
@@ -141,6 +142,8 @@ class MujocoBridgeConfig:
     rotate_settle_time_s: float = 0.35
     rotate_yaw_rate_tolerance_deg: float = 8.0
     state_timeout_s: float = 3.0
+    startup_command_burst_s: float = 0.5
+    startup_command_period_s: float = 0.05
     odom_source: str = "auto"
     dds_interface: str = "lo"
     dds_domain: int = 0
@@ -666,6 +669,84 @@ class MujocoRuntimeClient:
             publisher.send_planner(LOCO_IDLE, [0.0, 0.0, 0.0], facing, -1.0, -1.0)
             time.sleep(1.0 / max(self.config.rate_hz, 1.0))
 
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> JSONDict:
+        """Dispatch one complete protocol-v1 reference to the sim deploy process."""
+
+        publisher = self._require_publisher()
+        frames = payload.get("frames")
+        if not isinstance(frames, Mapping):
+            raise ValueError("reference motion payload requires frames")
+        if self.rollout_recorder is not None:
+            self.rollout_recorder.set_motion_context(payload)
+
+        # Switch modes before starting CONTROL. ZMQManager intentionally consumes
+        # the first command tick in its mode-switch safety reset, so the protocol
+        # is: (1) repeated streamed-mode commands with start=false, (2) send the
+        # complete FaceE pose, (3) repeated streamed-mode commands with start=true.
+        # This avoids executing an unrelated planner-IDLE motion before the chair
+        # reference and guarantees that the actor's first CONTROL tick sees FaceE.
+        if self.latest_state() is None:
+            mode_switch_deadline = time.monotonic() + max(
+                0.20,
+                self.config.startup_command_burst_s,
+            )
+            while True:
+                publisher.send_command(start=False, stop=False, planner=False)
+                remaining_s = mode_switch_deadline - time.monotonic()
+                if remaining_s <= 0.0:
+                    break
+                time.sleep(min(self.config.startup_command_period_s, remaining_s))
+
+        publisher.send_reference_motion(frames)
+
+        if self.latest_state() is None:
+            period_s = max(self.config.startup_command_period_s, 0.01)
+            # Let the 50 Hz C++ input loop consume and install the complete pose
+            # before start=true reaches WAIT_FOR_CONTROL.  Otherwise the first
+            # actor tick can still observe the pre-loaded example motion.
+            time.sleep(max(0.30, 3.0 * period_s))
+            deadline = time.monotonic() + max(
+                0.20, self.config.startup_command_burst_s
+            )
+            while True:
+                publisher.send_command(start=True, stop=False, planner=False)
+                remaining_s = deadline - time.monotonic()
+                if remaining_s <= 0.0:
+                    break
+                time.sleep(min(period_s, remaining_s))
+            if self.wait_for_state(timeout=self.config.state_timeout_s) is None:
+                raise RuntimeError(
+                    "no g1_debug state after FaceE streamed-motion startup; "
+                    "the C++ deploy process did not enter CONTROL"
+                )
+        if self.rollout_recorder is not None:
+            self.rollout_recorder.mark_action_dispatched(
+                {
+                    **dict(payload),
+                    "skill_name": "sonic.sit_chair",
+                }
+            )
+
+        duration_s = float(payload.get("duration_s", 0.0))
+        return {
+            "motion": "sonic_reference_motion",
+            "sonic_input": "reference_motion",
+            "chair_distance_m": float(payload["chair_distance_m"]),
+            "reference_distance_m": float(payload["reference_distance_m"]),
+            "motion_name": str(payload.get("motion_name", "")),
+            "tag": str(payload.get("tag", "")),
+            "duration_s": duration_s,
+            "frame_count": len(frames["joint_pos"]),
+            "completion": {
+                "motion_commanded": True,
+                "completion_source": "reference_dispatched",
+                "capture_timing": "after_dispatch",
+                "settled": False,
+                "duration_s": 0.0,
+                "command_duration_s": duration_s,
+            },
+        }
+
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> JSONDict:
         publisher = self._require_publisher()
         if speed_mps <= 0.0:
@@ -1002,6 +1083,10 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
         self.default_rate_deg_s = self.config.default_rotate_rate_deg_s
         if self.runtime is None:
             self.runtime = MujocoRuntimeClient(self.config)
+        if self.config.chair_motion_catalog:
+            self.chair_motion_catalog = ChairMotionCatalog(
+                self.config.chair_motion_catalog
+            )
         if self.config.use_move_model:
             self._move_model, self._move_model_error = self._load_move_model(self.config.move_model_file)
 
@@ -1034,6 +1119,45 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
         assert self.runtime is not None
         self.runtime.close()
         self.started = False
+
+    def play_sonic_reference_motion(
+        self, payload: Mapping[str, Any]
+    ) -> ExecuteActionResponse:
+        """Send a FaceE reference to SONIC running against MuJoCo, never dry-run."""
+
+        with self._motion_lock:
+            try:
+                health = self.start()
+                if not health.get("ok", False):
+                    return self._mujoco_failure(
+                        str(health.get("error_message")),
+                        dict(health.get("telemetry", {})),
+                    )
+                assert self.runtime is not None
+                telemetry = self.runtime.play_sonic_reference_motion(payload)
+            except Exception as exc:  # noqa: BLE001 - sim motion must fail closed.
+                halt_health = self.halt()
+                return self._mujoco_failure(
+                    str(exc),
+                    {
+                        "motion": "sonic_reference_motion",
+                        "halt_called": True,
+                        "halt_health": halt_health,
+                    },
+                )
+
+        return self._mujoco_success(
+            executed_arguments={
+                "primitive": "sonic_reference_motion",
+                "chair_distance_m": float(payload["chair_distance_m"]),
+                "reference_distance_m": float(payload["reference_distance_m"]),
+                "motion_name": str(payload.get("motion_name", "")),
+                "tag": str(payload.get("tag", "")),
+                "duration_s": float(payload.get("duration_s", 0.0)),
+                "frame_count": int(telemetry.get("frame_count", 0)),
+            },
+            telemetry=telemetry,
+        )
 
     def move(
         self,

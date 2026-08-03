@@ -142,3 +142,48 @@ real backend 未显式启用 motion、state/camera 未 ready、资源校验失�
 更完整的接口与构建说明见
 `docs/integration/facee_chair_distance_motion.md`；实施问题和边界见
 `/workspace/fangs1@xiaopeng.com/workspace_fs/fs_tasks/task14_process.md`。
+
+## FaceE E0019 仓库内 MuJoCo（2026-08-03）
+
+MuJoCo sit 的 catalog 加载和真实 ZMQ reference 下发已经接通，不再落入 dry-run。
+同时新增了显式 opt-in 的 E0019 exact-v3 18 条 catalog、配套 E0017 iteration-8
+ONNX、0.41 m 无靠背 chair scene，以及场景/reference 共用的距离与位姿契约。
+
+统一命令：
+
+```bash
+tools/run_facee_e0019_repo_mujoco.sh scene 1.50
+tools/run_facee_e0019_repo_mujoco.sh deploy
+tools/run_facee_e0019_repo_mujoco.sh bridge
+tools/run_facee_e0019_repo_mujoco.sh request 1.50
+```
+
+当前机器已验证 scene、DDS、HTTP 和一个 650 帧 ZMQ pose。C++ deploy 仍因本机缺少
+TensorRT/ONNX Runtime C++ 构建环境而未启动，所以这不是 13 秒 closed-loop rollout
+成功结论。完整资产路径、哈希、代码和验证边界见：
+
+```text
+docs/integration/vigil_mujoco_facee_validation_20260803.md
+```
+
+### 2026-08-03 更新：旧 C++ blocker 已解除
+
+上面一段是阶段记录。当前已在持久目录恢复 TensorRT 10.13.3、ONNX Runtime C++
+1.16.3 和 CycloneDDS 0.10.2，`g1_deploy_onnx_ref` 已构建并参与真实仓库闭环。
+
+d1p50 已通过 `scene -> C++/TRT deploy -> bridge -> request` 跑满 650 action samples。
+任务级结果是坐上并稳定保持；严格结果仍保留两个边界：一个 waist-pitch sample
+超限 0.000285 rad，且仓库 recorder 暂未记录物理 substep contact force，不能宣称
+strict no-kick pass。
+
+当前唯一应使用的完整仿真说明：
+
+```text
+docs/integration/facee_e0019_mujoco_sim_validation_workflow.md
+```
+
+代表性证据：
+
+```text
+outputs/vigil_rollouts/20260803T082456_135023Z_sonic_sit_chair_auto/
+```

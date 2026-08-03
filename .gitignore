@@ -214,6 +214,27 @@ data/
 !gear_sonic/vigil_bridge/data/
 !gear_sonic/vigil_bridge/data/facee_chair_13s/
 !gear_sonic/vigil_bridge/data/facee_chair_13s/*
+
+# Repository-mode FaceE MuJoCo scene: keep only the audited exact-v3 assets.
+!gear_sonic/data/
+gear_sonic/data/*
+!gear_sonic/data/robot_model/
+gear_sonic/data/robot_model/*
+!gear_sonic/data/robot_model/model_data/
+gear_sonic/data/robot_model/model_data/*
+!gear_sonic/data/robot_model/model_data/g1/
+gear_sonic/data/robot_model/model_data/g1/*
+!gear_sonic/data/robot_model/model_data/g1/scene_facee_backless.xml
+!gear_sonic/data/robot_model/model_data/g1/meshes/
+gear_sonic/data/robot_model/model_data/g1/meshes/*
+!gear_sonic/data/robot_model/model_data/g1/meshes/facee_backless_41cm_proxy.obj
+!gear_sonic/data/assets/
+gear_sonic/data/assets/*
+!gear_sonic/data/assets/robot_description/
+gear_sonic/data/assets/robot_description/*
+!gear_sonic/data/assets/robot_description/mjcf/
+gear_sonic/data/assets/robot_description/mjcf/*
+!gear_sonic/data/assets/robot_description/mjcf/scene_facee_training_primitives.xml
 bones_seed_smpl/
 sonic_release/
 # Training output logs

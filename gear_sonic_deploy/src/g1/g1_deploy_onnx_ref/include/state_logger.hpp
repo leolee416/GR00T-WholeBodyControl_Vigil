@@ -187,12 +187,22 @@ class StateLogger {
   size_t capacity() const;
   size_t size() const;
 
-  // Returns copies of the latest n entries (up to available size)
+  // Drop only the in-memory observation history. CSV files and the monotonic
+  // sample index remain intact. Call when entering CONTROL so a resume cannot
+  // feed stale pre-pause samples into the policy; the first new real sample is
+  // then repeated by GetLatest() to implement repeat_reset.
+  void ResetHistory();
+
+  // Returns exactly n entries.  Once at least one real sample exists, missing
+  // startup history is padded by repeating the earliest real sample (Isaac
+  // Lab first-push semantics), never by synthetic zero robot states.
   // If newest_first is true (default), returns [newest, ..., oldest]; otherwise [oldest, ..., newest]
   std::vector<Entry> GetLatest(size_t n, bool newest_first = true) const;
 
-  // Returns up to n entries sampled approximately every sample_dt_seconds going backward
-  // from the most recent entry. If sample_dt_seconds <= 0, behaves like GetLatest(n, newest_first).
+  // Returns n entries sampled approximately every sample_dt_seconds going
+  // backward from the most recent entry; missing startup samples repeat the
+  // earliest real entry. If sample_dt_seconds <= 0, behaves like
+  // GetLatest(n, newest_first).
   // Optimized path: if dt > 0 and sample_dt_seconds is an integer multiple of dt, we select by fixed stride.
   // If newest_first is true (default), returns [newest, ..., oldest]; otherwise [oldest, ..., newest]
   std::vector<Entry> GetLatest(size_t n, double sample_dt_seconds, bool newest_first = true) const;

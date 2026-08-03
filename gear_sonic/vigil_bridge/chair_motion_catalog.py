@@ -15,6 +15,10 @@ import numpy as np
 DEFAULT_CATALOG = (
     Path(__file__).resolve().parent / "data/facee_chair_13s_v2/manifest.json"
 )
+EXACT_V3_CATALOG = (
+    Path(__file__).resolve().parent
+    / "data/facee_chair_13s_exact_v3/manifest.json"
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +29,27 @@ class ChairMotion:
     motion_name: str
     duration_s: float
     frames: dict[str, Any]
+
+
+def select_chair_reference_distance_m(distance_m: Any) -> tuple[float, int]:
+    """Apply the deployment contract: ceil to the next 5 cm grid point."""
+    try:
+        measured = Decimal(str(distance_m))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("chair_distance_m must be numeric") from exc
+    if not measured.is_finite():
+        raise ValueError("chair_distance_m must be finite")
+    if measured < Decimal("1.10") or measured > Decimal("2.00"):
+        raise ValueError(
+            f"chair_distance_m={measured} is outside the supported measured range "
+            "[1.10, 2.00] m"
+        )
+    selected = (
+        (measured / Decimal("0.05")).to_integral_value(rounding=ROUND_CEILING)
+        * Decimal("0.05")
+    )
+    selected = max(selected, Decimal("1.15"))
+    return float(selected), int(selected * 100)
 
 
 class ChairMotionCatalog:
@@ -79,23 +104,7 @@ class ChairMotionCatalog:
         return [key / 100.0 for key in sorted(self._records)]
 
     def load(self, distance_m: Any) -> ChairMotion:
-        try:
-            measured = Decimal(str(distance_m))
-        except (InvalidOperation, TypeError, ValueError) as exc:
-            raise ValueError("chair_distance_m must be numeric") from exc
-        if not measured.is_finite():
-            raise ValueError("chair_distance_m must be finite")
-        if measured < Decimal("1.10") or measured > Decimal("2.00"):
-            raise ValueError(
-                f"chair_distance_m={measured} is outside the supported measured range "
-                "[1.10, 2.00] m"
-            )
-        selected = (
-            (measured / Decimal("0.05")).to_integral_value(rounding=ROUND_CEILING)
-            * Decimal("0.05")
-        )
-        selected = max(selected, Decimal("1.15"))
-        key = int(selected * 100)
+        selected, key = select_chair_reference_distance_m(distance_m)
         record = self._records[key]
         path = self.manifest_path.parent / str(record["file"])
         if self._sha256(path) != record["sha256"]:
@@ -106,8 +115,8 @@ class ChairMotionCatalog:
         frames["encode_mode"] = int(record.get("encode_mode", 0))
         frames["motion_id"] = -1
         return ChairMotion(
-            requested_distance_m=float(measured),
-            reference_distance_m=key / 100.0,
+            requested_distance_m=float(distance_m),
+            reference_distance_m=selected,
             tag=str(record["tag"]),
             motion_name=str(record["motion_name"]),
             duration_s=float(record["duration_s"]),

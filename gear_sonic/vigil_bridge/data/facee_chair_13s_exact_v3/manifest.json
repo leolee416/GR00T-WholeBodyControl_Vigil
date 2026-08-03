@@ -1,0 +1,1072 @@
+{
+  "schema_version": 2,
+  "name": "faceE_e0019_exact_v3_crosssim_18of18",
+  "protocol_version": 1,
+  "source_joint_order": "mujoco",
+  "joint_order": "isaaclab",
+  "joint_count": 29,
+  "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+  "joint_order_mapping_values": [
+    0,
+    6,
+    12,
+    1,
+    7,
+    13,
+    2,
+    8,
+    14,
+    3,
+    9,
+    15,
+    22,
+    4,
+    10,
+    16,
+    23,
+    5,
+    11,
+    17,
+    24,
+    18,
+    25,
+    19,
+    26,
+    20,
+    27,
+    21,
+    28
+  ],
+  "joint_order_mapping_source": "gear_sonic/envs/manager_env/robots/g1.py",
+  "joint_order_mapping_source_sha256": "42f9b4394eb21512735da4b1ca78c2d0546c4221c7bdaf8b3a186d8dc5588ba9",
+  "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/taskset_exact_v3_all18.json",
+  "source_taskset_sha256": "35eed93b181ad0c4e1a4fc498f2cd05f99d99ce3e28c2a65ccd9e68819ddba1d",
+  "policy_checkpoint": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0017_mjwarp_shared_ppo/evidence/s0_iter0008_newbest/full_checkpoint/model_step_mjwarp_s0_iter0008.pt",
+  "policy_checkpoint_sha256": "3727209b0340fc31c499d1e069386c7e10297fce80adb4f87e9db10e840e7650",
+  "policy_observation_contract": "reference_motion_plus_proprioception_no_height_map_no_chair_pose",
+  "startup_history": "repeat_reset",
+  "selection_policy": "ceil measured distance to the next available 0.05 m reference; measured range [1.10, 2.00] m",
+  "construction": "E0019 exact-v3 selected PKL finalized dof channels; authoritative evaluator-equivalent interpolation to 50 Hz; MuJoCo-to-IsaacLab joint reorder exactly once; 650 frames/13 seconds.",
+  "chair_geometry": {
+    "backrest": false,
+    "width_m": 0.5,
+    "depth_m": 0.45,
+    "seat_height_m": 0.41,
+    "collision_semantics": "E0019 audited rounded backless seat proxy",
+    "mesh": "gear_sonic/data/robot_model/model_data/g1/meshes/facee_backless_41cm_proxy.obj",
+    "mesh_sha256": "47bf22f5589627e4cb04c43bf7625e9f96a464027344a8b28ab1be11f970b8cd",
+    "vertices": 258,
+    "triangles": 512
+  },
+  "count": 18,
+  "motions": [
+    {
+      "tag": "d1p15",
+      "distance_m": 1.15,
+      "reference_distance_m": 1.15,
+      "motion_name": "faceE_crop_targetd1p15_refd1p55_f055_hold13s_e0019",
+      "file": "d1p15.npz",
+      "sha256": "772fd7d30a9a736a974cfb8eb99ab2eaa96cda008c97ca18050e169ef252b38c",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d115_dense15/motions/robot/faceE_crop_targetd1p15_refd1p55_f055_hold13s_e0019.pkl",
+      "source_motion_sha256": "77f7aaebbcfe4e99af6cd0b805c1a6e60cd7e9fb1aedcc7fe8e4a1d19e475a9b",
+      "source_motion_key": "faceE_crop_targetd1p15_refd1p55_f055_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d115_dense15_exact/manifests/target_d1p15__ref_d1p55__f055__r8__exact.json",
+      "source_task_manifest_sha256": "861d75476b1cf5d83b01fc084cb21d1ab0d5eadbcbb293ee84e9928c89526be1",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d115_dense15_exact/taskset.json",
+        "source_taskset_sha256": "c5bf6067fc17910445c7862cf4496f0c9e980183ed8284eadff71f1dc2edbd04",
+        "source_tag": "target_d1p15__ref_d1p55__f055__r8__exact",
+        "selection_reason": "cross-simulator pass: CPU MuJoCo strict/no-kick and Isaac strict; donor d1p55 crop frame 55; MuJoCo final torso tilt 1.97 deg and joint-limit margin 0.0414 rad; Isaac MPJPE 215.1 mm"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.0214583843501401,
+          0.11951283937977332
+        ],
+        "center_distance_m": 1.0284262490503704,
+        "yaw_rad": -2.984803914579789,
+        "source_root_world_xy_m": [
+          -1.392248511314392,
+          -0.20432041585445404
+        ],
+        "source_root_world_yaw_rad": 0.21626491946624393,
+        "source_chair_world_xy_m": [
+          -0.4202296686973619,
+          0.13159612040606292
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.15,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p20",
+      "distance_m": 1.2,
+      "reference_distance_m": 1.2,
+      "motion_name": "faceE_crop_targetd1p20_refd1p55_f054_hold13s_e0019",
+      "file": "d1p20.npz",
+      "sha256": "b75046d101533effdbe55fb3c6d518694dd3e38e7803af4ea3398f124450178b",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction/motions/robot/faceE_crop_targetd1p20_refd1p55_f054_hold13s_e0019.pkl",
+      "source_motion_sha256": "da9f94380348bbe1c5f7b2009bc3187fbfd41c11979f167953766d2f06f2c9e6",
+      "source_motion_key": "faceE_crop_targetd1p20_refd1p55_f054_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/manifests/target_d1p20__ref_d1p55__f054__r2__exact.json",
+      "source_task_manifest_sha256": "b5f614cf7709d5d6ec1022f02df873eae4cd5f3d26c346fd2f0ab5bcc01f5085",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/taskset.json",
+        "source_taskset_sha256": "eafd6c98f891c90435a22112b6da3e84ae14d915234e99c79ccace80207a8160",
+        "source_tag": "target_d1p20__ref_d1p55__f054__r2__exact",
+        "selection_reason": "CPU MuJoCo strict and no-kick; exact-grid snap; 0.0582 rad minimum joint-limit margin"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.0725428309329097,
+          0.11249466856376432
+        ],
+        "center_distance_m": 1.0784262490503702,
+        "yaw_rad": -2.9911479863992065,
+        "source_root_world_xy_m": [
+          -1.4050756692886353,
+          -0.20225510001182556
+        ],
+        "source_root_world_yaw_rad": 0.22260899128566067,
+        "source_chair_world_xy_m": [
+          -0.38383408884062886,
+          0.1442543645124631
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.2,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p25",
+      "distance_m": 1.25,
+      "reference_distance_m": 1.25,
+      "motion_name": "faceE_crop_targetd1p25_refd1p60_f054_hold13s_e0019",
+      "file": "d1p25.npz",
+      "sha256": "b75046d101533effdbe55fb3c6d518694dd3e38e7803af4ea3398f124450178b",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction/motions/robot/faceE_crop_targetd1p25_refd1p60_f054_hold13s_e0019.pkl",
+      "source_motion_sha256": "31c572ca304b35e8c7ac1a16acff61e741eff898446562582200b586c9c60bf7",
+      "source_motion_key": "faceE_crop_targetd1p25_refd1p60_f054_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/manifests/target_d1p25__ref_d1p60__f054__r2__exact.json",
+      "source_task_manifest_sha256": "afbcf72f3799cf724869db5a7dabfe021c8b1859b9bc2a237a568cc0e90fd0b6",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/taskset.json",
+        "source_taskset_sha256": "eafd6c98f891c90435a22112b6da3e84ae14d915234e99c79ccace80207a8160",
+        "source_tag": "target_d1p25__ref_d1p60__f054__r2__exact",
+        "selection_reason": "CPU MuJoCo strict and no-kick; exact-grid snap; 0.0384 rad minimum joint-limit margin"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.1224270297273604,
+          0.11074702840602811
+        ],
+        "center_distance_m": 1.1278773609587838,
+        "yaw_rad": -2.9911479863992065,
+        "source_root_world_xy_m": [
+          -1.4050756692886353,
+          -0.20225510001182556
+        ],
+        "source_root_world_yaw_rad": 0.22260899128566067,
+        "source_chair_world_xy_m": [
+          -0.3347949589240666,
+          0.15356303103950905
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.25,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p30",
+      "distance_m": 1.3,
+      "reference_distance_m": 1.3,
+      "motion_name": "faceE_crop_targetd1p30_refd1p60_f051_hold13s_e0019",
+      "file": "d1p30.npz",
+      "sha256": "fb1806fc040e1c429bd2cf30b896ae7fc8b987af2699fa89aedc61ac8ae7f37d",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction/motions/robot/faceE_crop_targetd1p30_refd1p60_f051_hold13s_e0019.pkl",
+      "source_motion_sha256": "3b1755a8a5c9ec219ff5d01c6603315af6cfd0a6299d6703e63bb7e064b07eb1",
+      "source_motion_key": "faceE_crop_targetd1p30_refd1p60_f051_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/manifests/target_d1p30__ref_d1p60__f051__r2__exact.json",
+      "source_task_manifest_sha256": "982face1dd6412a00512c028a13b8b20f56b040b989bca3807eb7cb923d3b795",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/taskset.json",
+        "source_taskset_sha256": "eafd6c98f891c90435a22112b6da3e84ae14d915234e99c79ccace80207a8160",
+        "source_tag": "target_d1p30__ref_d1p60__f051__r2__exact",
+        "selection_reason": "only exact-grid strict no-kick candidate; 0.0073 rad minimum joint-limit margin"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.1760143198277195,
+          0.06622233021704138
+        ],
+        "center_distance_m": 1.1778773609587836,
+        "yaw_rad": -3.013792188750175,
+        "source_root_world_xy_m": [
+          -1.4357877969741821,
+          -0.1885530650615692
+        ],
+        "source_root_world_yaw_rad": 0.24525319363662992,
+        "source_chair_world_xy_m": [
+          -0.3110435814720051,
+          0.16122618983160095
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.3,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p35",
+      "distance_m": 1.35,
+      "reference_distance_m": 1.35,
+      "motion_name": "faceE_crop_targetd1p35_refd1p70_f047_hold13s_e0019",
+      "file": "d1p35.npz",
+      "sha256": "67543db71feee7ccedfe031a78100db0fb0321009dddf1607fdea82b45c7f528",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction/motions/robot/faceE_crop_targetd1p35_refd1p70_f047_hold13s_e0019.pkl",
+      "source_motion_sha256": "c8c029cb8baf2dc0a72d775cfb18dcf75bc25d8c246169f5cdc60c3ab1db56f9",
+      "source_motion_key": "faceE_crop_targetd1p35_refd1p70_f047_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/manifests/target_d1p35__ref_d1p70__f047__r2__exact.json",
+      "source_task_manifest_sha256": "94064c5be4ef8ee74773e5e77d92e0ba20e416b3e3e0d4c44b59a3855e4674fa",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/taskset.json",
+        "source_taskset_sha256": "eafd6c98f891c90435a22112b6da3e84ae14d915234e99c79ccace80207a8160",
+        "source_tag": "target_d1p35__ref_d1p70__f047__r2__exact",
+        "selection_reason": "CPU MuJoCo strict and no-kick; exact-grid snap; upright 1.53 deg final torso tilt"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.132881472024518,
+          0.42366373841252036
+        ],
+        "center_distance_m": 1.2095087403165432,
+        "yaw_rad": -2.798239542098564,
+        "source_root_world_xy_m": [
+          -1.5516923666000366,
+          -0.33455049991607666
+        ],
+        "source_root_world_yaw_rad": 0.029700546985018342,
+        "source_chair_world_xy_m": [
+          -0.4318917228446146,
+          0.1225686433573744
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.35,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p40",
+      "distance_m": 1.4,
+      "reference_distance_m": 1.4,
+      "motion_name": "faceE_crop_targetd1p40_refd1p60_f036_hold13s_e0019",
+      "file": "d1p40.npz",
+      "sha256": "1d95aa862fe6e581cd81be3560fe317940d951c137456037396a7df320fd8a70",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction/motions/robot/faceE_crop_targetd1p40_refd1p60_f036_hold13s_e0019.pkl",
+      "source_motion_sha256": "7a294304cd9ee5855569781f506f463c66252ac799f14dac07b126804f0ac899",
+      "source_motion_key": "faceE_crop_targetd1p40_refd1p60_f036_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/manifests/target_d1p40__ref_d1p60__f036__r0__exact.json",
+      "source_task_manifest_sha256": "edc3b8318902af68080705f4b1ba3e21a88b5d1e6d46020eb750a7e49c290206",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/taskset.json",
+        "source_taskset_sha256": "eafd6c98f891c90435a22112b6da3e84ae14d915234e99c79ccace80207a8160",
+        "source_tag": "target_d1p40__ref_d1p60__f036__r0__exact",
+        "selection_reason": "only exact-grid strict no-kick candidate; 0.0260 rad minimum joint-limit margin"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.271241571096834,
+          0.13005928481365084
+        ],
+        "center_distance_m": 1.2778773609587837,
+        "yaw_rad": -2.942556951884537,
+        "source_root_world_xy_m": [
+          -1.5550119876861572,
+          -0.1913653165102005
+        ],
+        "source_root_world_yaw_rad": 0.1740179567709917,
+        "source_chair_world_xy_m": [
+          -0.3254885157729055,
+          0.1568337381487236
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.4,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p45",
+      "distance_m": 1.45,
+      "reference_distance_m": 1.45,
+      "motion_name": "faceE_crop_targetd1p45_refd1p60_f032_hold13s_e0019",
+      "file": "d1p45.npz",
+      "sha256": "a21b577a11557a5f36b67061b4d80869aa2ae92f37630951667e8cce557b0aa8",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d145_dense15/motions/robot/faceE_crop_targetd1p45_refd1p60_f032_hold13s_e0019.pkl",
+      "source_motion_sha256": "c6f0e92b3b505c7189ea2a399b2d7d385de203635905c24c99438995c4f36bc2",
+      "source_motion_key": "faceE_crop_targetd1p45_refd1p60_f032_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d145_dense15_exact/manifests/target_d1p45__ref_d1p60__f032__r3__exact.json",
+      "source_task_manifest_sha256": "996cc82914e0dc22b3fbc965b30100c587039f3b86a93ea4920547c5a52c8de6",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d145_dense15_exact/taskset.json",
+        "source_taskset_sha256": "0a431fe4fbd4c0b1bc5a50b6fa1612c61ac6168707c53a45e90db83240664e1d",
+        "source_tag": "target_d1p45__ref_d1p60__f032__r3__exact",
+        "selection_reason": "CPU MuJoCo strict and no-kick exact-grid repair; 1.24 deg final torso tilt, 0.0295 rad joint-limit margin, and only 0.0190 m chair snap"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.3230250144223556,
+          0.11341559398772723
+        ],
+        "center_distance_m": 1.3278773609587835,
+        "yaw_rad": -2.9721715986837474,
+        "source_root_world_xy_m": [
+          -1.5764093399047852,
+          -0.21534788608551025
+        ],
+        "source_root_world_yaw_rad": 0.20363260357020205,
+        "source_chair_world_xy_m": [
+          -0.30365593659974904,
+          0.16327733774712305
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.45,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p50",
+      "distance_m": 1.5,
+      "reference_distance_m": 1.5,
+      "motion_name": "faceE_crop_targetd1p50_refd1p90_f060_hold13s_e0019",
+      "file": "d1p50.npz",
+      "sha256": "b46d1752b376955a61c4dc401e2f4dae43774a966b74b9ab3bb8830a587f7c3f",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction/motions/robot/faceE_crop_targetd1p50_refd1p90_f060_hold13s_e0019.pkl",
+      "source_motion_sha256": "77ebbe6af4316ee992e95fda8ac352501b64c45da6bb35ad218415f49b55e775",
+      "source_motion_key": "faceE_crop_targetd1p50_refd1p90_f060_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/manifests/target_d1p50__ref_d1p90__f060__r2__exact.json",
+      "source_task_manifest_sha256": "8276dd83ed3562c4a094af6b08c658384d3c59064267a3a19a1a1c3ccf46a594",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_exact/taskset.json",
+        "source_taskset_sha256": "eafd6c98f891c90435a22112b6da3e84ae14d915234e99c79ccace80207a8160",
+        "source_tag": "target_d1p50__ref_d1p90__f060__r2__exact",
+        "selection_reason": "only exact-grid strict no-kick candidate; 0.0209 rad minimum joint-limit margin"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.305757758685104,
+          0.38348092375246
+        ],
+        "center_distance_m": 1.3609044577957654,
+        "yaw_rad": -2.8074091346544563,
+        "source_root_world_xy_m": [
+          -1.66032075881958,
+          -0.299345999956131
+        ],
+        "source_root_world_yaw_rad": 0.038870139540909905,
+        "source_chair_world_xy_m": [
+          -0.3704515064051894,
+          0.13458746835937824
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.5,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p55",
+      "distance_m": 1.55,
+      "reference_distance_m": 1.55,
+      "motion_name": "faceE_refd1p60_chaird1p55_v49_hold13s_v61",
+      "file": "d1p55.npz",
+      "sha256": "a63b24f274556254b2e881a4155fa5e650d0ba7db822fa541322c21f97a14cf7",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/GRAIL/data/motion_lib/sitting_faceE_noheight_student_v65/robot/faceE_refd1p60_chaird1p55_v49_hold13s_v61.pkl",
+      "source_motion_sha256": "b1be1a5c43007abc402356d9f679f8d555071a2ae6a1019f6fadbfa8436dc714",
+      "source_motion_key": "faceE_refd1p60_chaird1p55_v49_hold13s_v61",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/manifests/d1p55.json",
+      "source_task_manifest_sha256": "4434f5c76e8a215d80148f81067281ddd29b2649647fa1dc0ba4bbddcc6a7eb1",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/taskset_exact_v65_all18.json",
+        "source_taskset_sha256": "503951a80cdfbd9b82f6f37a98ed257b385ea7f8763be2f1b1fc1839839e05d6",
+        "source_tag": "d1p55",
+        "selection_reason": "E0017 CPU MuJoCo strict no-kick baseline success"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.4212803544757329,
+          0.1427014469353621
+        ],
+        "center_distance_m": 1.4284262490503705,
+        "yaw_rad": -3.00548465479077,
+        "source_root_world_xy_m": [
+          -1.7191083431243896,
+          -0.32374146580696106
+        ],
+        "source_root_world_yaw_rad": 0.23694565967722422,
+        "source_chair_world_xy_m": [
+          -0.3710363033652305,
+          0.14859668064713477
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.55,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p60",
+      "distance_m": 1.6,
+      "reference_distance_m": 1.6,
+      "motion_name": "faceE_backless_longwalk_d1p60m_hold13s_v61",
+      "file": "d1p60.npz",
+      "sha256": "a63b24f274556254b2e881a4155fa5e650d0ba7db822fa541322c21f97a14cf7",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/GRAIL/data/motion_lib/sitting_faceE_noheight_student_v65/robot/faceE_backless_longwalk_d1p60m_hold13s_v61.pkl",
+      "source_motion_sha256": "028f740d99ecf6dce4a3593e38d255523c34f8165786a24bd48cc9e01222708a",
+      "source_motion_key": "faceE_backless_longwalk_d1p60m_hold13s_v61",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/manifests/d1p60.json",
+      "source_task_manifest_sha256": "ed54fb6244775d01535c93c931d3fa76c2d211522fe231fcce4291b0513f7772",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/taskset_exact_v65_all18.json",
+        "source_taskset_sha256": "503951a80cdfbd9b82f6f37a98ed257b385ea7f8763be2f1b1fc1839839e05d6",
+        "source_tag": "d1p60",
+        "selection_reason": "E0017 CPU MuJoCo strict no-kick baseline success"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.4712158387453078,
+          0.14016222693522065
+        ],
+        "center_distance_m": 1.477877360958784,
+        "yaw_rad": -3.00548465479077,
+        "source_root_world_xy_m": [
+          -1.7191083431243896,
+          -0.32374146580696106
+        ],
+        "source_root_world_yaw_rad": 0.23694565967722422,
+        "source_chair_world_xy_m": [
+          -0.32189999999999996,
+          0.15785
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.6,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p65",
+      "distance_m": 1.65,
+      "reference_distance_m": 1.65,
+      "motion_name": "faceE_refd1p75_chaird1p65_v51_hold13s_v61",
+      "file": "d1p65.npz",
+      "sha256": "e0e9e1600e34a752b0d43a07a4e3b347a453122188a2bcce5ce7d43280220f0d",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/GRAIL/data/motion_lib/sitting_faceE_noheight_student_v65/robot/faceE_refd1p75_chaird1p65_v51_hold13s_v61.pkl",
+      "source_motion_sha256": "3aef7293ca18750793d21af175632bdead0a0d5c550dc7aeb9c543958a75b8f8",
+      "source_motion_key": "faceE_refd1p75_chaird1p65_v51_hold13s_v61",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/manifests/d1p65.json",
+      "source_task_manifest_sha256": "90f2a1c30e3976d7b5528a70831305ca6bd7e6ce4a30b1e1958bf25dbbeb51bf",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/taskset_exact_v65_all18.json",
+        "source_taskset_sha256": "503951a80cdfbd9b82f6f37a98ed257b385ea7f8763be2f1b1fc1839839e05d6",
+        "source_tag": "d1p65",
+        "selection_reason": "E0017 CPU MuJoCo strict no-kick baseline success"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.5098724929123046,
+          -0.0017251782071862974
+        ],
+        "center_distance_m": 1.5098734785050911,
+        "yaw_rad": -3.0304552994249745,
+        "source_root_world_xy_m": [
+          -1.9244260787963867,
+          -0.2671374976634979
+        ],
+        "source_root_world_yaw_rad": 0.26191630431142887,
+        "source_chair_world_xy_m": [
+          -0.46560023872852324,
+          0.12215042848289012
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.65,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p70",
+      "distance_m": 1.7,
+      "reference_distance_m": 1.7,
+      "motion_name": "faceE_refd1p75_chaird1p70_v51_hold13s_v61",
+      "file": "d1p70.npz",
+      "sha256": "e0e9e1600e34a752b0d43a07a4e3b347a453122188a2bcce5ce7d43280220f0d",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/GRAIL/data/motion_lib/sitting_faceE_noheight_student_v65/robot/faceE_refd1p75_chaird1p70_v51_hold13s_v61.pkl",
+      "source_motion_sha256": "0fe795fe9d1236f5355511c3918eb28e3b0cabda0c29308d0700790745a93f37",
+      "source_motion_key": "faceE_refd1p75_chaird1p70_v51_hold13s_v61",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/manifests/d1p70.json",
+      "source_task_manifest_sha256": "85c866a826469d7e04022db0e2854594a452ec559b6733ed07ca4bfc41a0eeac",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/taskset_exact_v65_all18.json",
+        "source_taskset_sha256": "503951a80cdfbd9b82f6f37a98ed257b385ea7f8763be2f1b1fc1839839e05d6",
+        "source_tag": "d1p70",
+        "selection_reason": "E0017 CPU MuJoCo strict no-kick baseline success"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.5594886876494511,
+          -0.007908490189929701
+        ],
+        "center_distance_m": 1.5595087403165433,
+        "yaw_rad": -3.0304552994249745,
+        "source_root_world_xy_m": [
+          -1.9244260787963867,
+          -0.2671374976634979
+        ],
+        "source_root_world_yaw_rad": 0.26191630431142887,
+        "source_chair_world_xy_m": [
+          -0.4160751193642616,
+          0.12902521424144506
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.7,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p75",
+      "distance_m": 1.75,
+      "reference_distance_m": 1.75,
+      "motion_name": "faceE_backless_longwalk_d1p75m_hold13s_v61",
+      "file": "d1p75.npz",
+      "sha256": "e0e9e1600e34a752b0d43a07a4e3b347a453122188a2bcce5ce7d43280220f0d",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/GRAIL/data/motion_lib/sitting_faceE_noheight_student_v65/robot/faceE_backless_longwalk_d1p75m_hold13s_v61.pkl",
+      "source_motion_sha256": "03650262c3c949c6f60175f0f37657daf3e66bb28343d6222ac5a50f3cfd24ec",
+      "source_motion_key": "faceE_backless_longwalk_d1p75m_hold13s_v61",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/manifests/d1p75.json",
+      "source_task_manifest_sha256": "5a7fcf496b5377ebb2dfe597590da5800cefc6a261f78942e3f79a3e445eb945",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/taskset_exact_v65_all18.json",
+        "source_taskset_sha256": "503951a80cdfbd9b82f6f37a98ed257b385ea7f8763be2f1b1fc1839839e05d6",
+        "source_tag": "d1p75",
+        "selection_reason": "E0017 CPU MuJoCo strict no-kick baseline success"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.6091048823865977,
+          -0.01409180217267305
+        ],
+        "center_distance_m": 1.6091665859720243,
+        "yaw_rad": -3.0304552994249745,
+        "source_root_world_xy_m": [
+          -1.9244260787963867,
+          -0.2671374976634979
+        ],
+        "source_root_world_yaw_rad": 0.26191630431142887,
+        "source_chair_world_xy_m": [
+          -0.36655,
+          0.1359
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.75,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p80",
+      "distance_m": 1.8,
+      "reference_distance_m": 1.8,
+      "motion_name": "faceE_crop_targetd1p80_refd1p95_f035_hold13s_e0019",
+      "file": "d1p80.npz",
+      "sha256": "ee910b6e9990d668b2102c44e524f5b73d56b8cb9fd289f9a1cbdb63f3507f12",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d180_dense15/motions/robot/faceE_crop_targetd1p80_refd1p95_f035_hold13s_e0019.pkl",
+      "source_motion_sha256": "7baa5f935d4ef0ec469ec6794671ceca81710ebe3cf24f4a6b6bbcc631141b5f",
+      "source_motion_key": "faceE_crop_targetd1p80_refd1p95_f035_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d180_dense15_exact/manifests/target_d1p80__ref_d1p95__f035__r14__exact.json",
+      "source_task_manifest_sha256": "4aa2d80766551ca1f5bc84b736e5a7ecbe1d0b36376ae2e214555ab9bb623646",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d180_dense15_exact/taskset.json",
+        "source_taskset_sha256": "521b0c858000401c8eb1c2e7de29a10d0629877ef39439c49a384dcc7aeb1273",
+        "source_tag": "target_d1p80__ref_d1p95__f035__r14__exact",
+        "selection_reason": "CPU MuJoCo strict and no-kick exact-grid repair; 3.71 deg final torso tilt, 0.0270 rad joint-limit margin, and zero pre-seat lower-leg/chair force"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.5982696074514027,
+          0.4537429188376859
+        ],
+        "center_distance_m": 1.661429617678162,
+        "yaw_rad": -2.8081523396164325,
+        "source_root_world_xy_m": [
+          -1.8549954891204834,
+          -0.35113754868507385
+        ],
+        "source_root_world_yaw_rad": 0.03961334450288685,
+        "source_chair_world_xy_m": [
+          -0.27594930766722664,
+          0.16554565341858662
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.8,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p85",
+      "distance_m": 1.85,
+      "reference_distance_m": 1.85,
+      "motion_name": "faceE_crop_targetd1p85_refd2p00_f024_hold13s_e0019",
+      "file": "d1p85.npz",
+      "sha256": "5343d288c63945c953b4b3579424bd32839c15672c8a530342fe0bee5fbf5db4",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d185_dense15/motions/robot/faceE_crop_targetd1p85_refd2p00_f024_hold13s_e0019.pkl",
+      "source_motion_sha256": "2fc84eae7060276648aa1decd7a419d5b34bcfdbe9880f4ec0c56ed33c57c035",
+      "source_motion_key": "faceE_crop_targetd1p85_refd2p00_f024_hold13s_e0019",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d185_dense15_exact/manifests/target_d1p85__ref_d2p00__f024__r5__exact.json",
+      "source_task_manifest_sha256": "2770d3ab994c025f1d25bccf24a4888b9d0ced95a34fb48a19f027b874934573",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0008_mujoco_warp_torch/E0019_crop_transfer_search/construction_d185_dense15_exact/taskset.json",
+        "source_taskset_sha256": "c5aa25ec8e7ad24e260d7052d48d4b1bfb2d0a945e5474296ebe85c4ff0e48c3",
+        "source_tag": "target_d1p85__ref_d2p00__f024__r5__exact",
+        "selection_reason": "cross-simulator pass: CPU MuJoCo strict/no-kick and Isaac strict; donor d2p00 crop frame 24; MuJoCo final torso tilt 5.08 deg and joint-limit margin 0.0184 rad; Isaac MPJPE 196.2 mm"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.6704998841640193,
+          0.3743490679424245
+        ],
+        "center_distance_m": 1.7119308069140422,
+        "yaw_rad": -2.8458083528031306,
+        "source_root_world_xy_m": [
+          -2.0441460609436035,
+          -0.37885573506355286
+        ],
+        "source_root_world_yaw_rad": 0.07726935768958505,
+        "source_chair_world_xy_m": [
+          -0.407527537508969,
+          0.12332639963659717
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.85,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p90",
+      "distance_m": 1.9,
+      "reference_distance_m": 1.9,
+      "motion_name": "faceE_d1p75_gait_to_d1p90_c39_67_hold13s_v61",
+      "file": "d1p90.npz",
+      "sha256": "9d920568376d3ed89c1f525c4561d3ad12a12d06ca9ca44d93432cc47e2f6da8",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/GRAIL/data/motion_lib/sitting_faceE_noheight_student_v65/robot/faceE_d1p75_gait_to_d1p90_c39_67_hold13s_v61.pkl",
+      "source_motion_sha256": "54b5dc1b7d04017197451add7063695a7c5cb55180cd10dffb4a8f707d5ed34a",
+      "source_motion_key": "faceE_d1p75_gait_to_d1p90_c39_67_hold13s_v61",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/manifests/d1p90.json",
+      "source_task_manifest_sha256": "6ca977920582a8437ee41ddd6c05f97c037d8721e91a3ea0191356f23aabf263",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/taskset_exact_v65_all18.json",
+        "source_taskset_sha256": "503951a80cdfbd9b82f6f37a98ed257b385ea7f8763be2f1b1fc1839839e05d6",
+        "source_tag": "d1p90",
+        "selection_reason": "E0017 CPU MuJoCo strict no-kick baseline success"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.7608867037229183,
+          -0.007907347016130231
+        ],
+        "center_distance_m": 1.7609044577957653,
+        "yaw_rad": -3.0304552994249745,
+        "source_root_world_xy_m": [
+          -2.069430112838745,
+          -0.31241220235824585
+        ],
+        "source_root_world_yaw_rad": 0.26191630431142887,
+        "source_chair_world_xy_m": [
+          -0.36655,
+          0.1359
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.9,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d1p95",
+      "distance_m": 1.95,
+      "reference_distance_m": 1.95,
+      "motion_name": "faceE_d1p75_gait_to_d1p95_c39_67_hold13s_v61",
+      "file": "d1p95.npz",
+      "sha256": "f78ff523531f05c6e6445d5203056913dc140d47d35a189a03dce5e662e8da92",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/GRAIL/data/motion_lib/sitting_faceE_noheight_student_v65/robot/faceE_d1p75_gait_to_d1p95_c39_67_hold13s_v61.pkl",
+      "source_motion_sha256": "5a8c507e708dd89f197593470dcf6661407750a0f85cd62b52d7ebb5a16bb68e",
+      "source_motion_key": "faceE_d1p75_gait_to_d1p95_c39_67_hold13s_v61",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/manifests/d1p95.json",
+      "source_task_manifest_sha256": "55e6447deed4f15aa21ff07cb79122ebaac78f33654995b2bd01072c76f3a9bc",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/taskset_exact_v65_all18.json",
+        "source_taskset_sha256": "503951a80cdfbd9b82f6f37a98ed257b385ea7f8763be2f1b1fc1839839e05d6",
+        "source_tag": "d1p95",
+        "selection_reason": "E0017 CPU MuJoCo strict no-kick baseline success"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.8114201769121068,
+          -0.005848288413221013
+        ],
+        "center_distance_m": 1.8114296176781621,
+        "yaw_rad": -3.0304552994249745,
+        "source_root_world_xy_m": [
+          -2.1177070140838623,
+          -0.3274857699871063
+        ],
+        "source_root_world_yaw_rad": 0.26191630431142887,
+        "source_chair_world_xy_m": [
+          -0.36655,
+          0.1359
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 1.95,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    },
+    {
+      "tag": "d2p00",
+      "distance_m": 2.0,
+      "reference_distance_m": 2.0,
+      "motion_name": "faceE_d1p75_gait_to_d2p00_c39_67_hold13s_v61",
+      "file": "d2p00.npz",
+      "sha256": "01f8657bdff8edbb1bd3cde4afa3f3cd449423a7b206f964c5c07c00f090ddb0",
+      "fps": 50,
+      "frames": 650,
+      "duration_s": 13.0,
+      "encode_mode": 0,
+      "protocol_version": 1,
+      "source_joint_order": "mujoco",
+      "joint_order": "isaaclab",
+      "joint_order_mapping": "G1_MUJOCO_TO_ISAACLAB_DOF",
+      "source_motion": "/workspace/fangs1@xiaopeng.com/workspace_fs/GRAIL/data/motion_lib/sitting_faceE_noheight_student_v65/robot/faceE_d1p75_gait_to_d2p00_c39_67_hold13s_v61.pkl",
+      "source_motion_sha256": "0c45286f6c4e80b8ce74ce0474a5ee0267fa4b554af4dcc50b6a205c76651cde",
+      "source_motion_key": "faceE_d1p75_gait_to_d2p00_c39_67_hold13s_v61",
+      "source_task_manifest": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/manifests/d2p00.json",
+      "source_task_manifest_sha256": "87caaa37424103bce0e656f89687ca52b4bea1322b845d4381bffb52d2b38b3b",
+      "provenance": {
+        "source_taskset": "/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/R0005_isaac_parallel_finetune/E0007_isaac_parallel_finetune/evaluation/mujoco_v65/taskset_exact_v65_all18.json",
+        "source_taskset_sha256": "503951a80cdfbd9b82f6f37a98ed257b385ea7f8763be2f1b1fc1839839e05d6",
+        "source_tag": "d2p00",
+        "selection_reason": "E0017 CPU MuJoCo strict no-kick baseline success"
+      },
+      "chair_layout": {
+        "frame": "initial_robot_heading",
+        "center_xy_m": [
+          1.861926948965764,
+          -0.0037903100951132943
+        ],
+        "center_distance_m": 1.8619308069140421,
+        "yaw_rad": -3.0304552994249745,
+        "source_root_world_xy_m": [
+          -2.1659584045410156,
+          -0.3425513803958893
+        ],
+        "source_root_world_yaw_rad": 0.26191630431142887,
+        "source_chair_world_xy_m": [
+          -0.36655,
+          0.1359
+        ],
+        "source_chair_world_yaw_rad": 3.5146463120660405,
+        "nominal_distance_m": 2.0,
+        "seat_height_m": 0.41,
+        "width_m": 0.5,
+        "depth_m": 0.45,
+        "backrest": false
+      },
+      "crosssim_acceptance": {
+        "isaac_physx_strict": true,
+        "cpu_mujoco_strict": true,
+        "cpu_mujoco_no_preseat_lower_leg_kick": true
+      }
+    }
+  ]
+}

@@ -35,10 +35,31 @@ external agent / Vigil client
 | backend | runtime_mode | 用途 | 运行时连接 | 运动安全默认值 |
 | --- | --- | --- | --- | --- |
 | `dry_run` | `dry_run` 或请求传入值 | 协议测试、假客户端对接 | 无真实 runtime；返回 fake state/image | 不下发任何 WBC/机器人命令 |
-| `mujoco` | `mujoco` | 已启动 MuJoCo/deploy 后的仿真控制 | ZMQ command/planner、ZMQ `g1_debug`、可选 DDS `rt/odostate`、可选 camera ZMQ | 不自动启动控制，除非传 `--auto-start-control` |
+| `mujoco` | `mujoco` | 已启动 MuJoCo/deploy 后的仿真控制，包括 `sonic.sit_chair` reference 下发 | ZMQ command/planner/pose、ZMQ `g1_debug`、可选 DDS `rt/odostate`、可选 camera ZMQ | 不自动启动控制，除非传 `--auto-start-control` |
 | `real` | `real` | 已启动 real deploy 后的机器人控制 | ZMQ command/planner、ZMQ `g1_debug`、可选/必需 camera ZMQ | `--enable-real-motion` 未开启时拒绝运动 |
 
 Bridge 不负责启动 MuJoCo、deploy、policy inference 或硬件流程。
+
+### FaceE E0019 仓库内 MuJoCo（显式 opt-in）
+
+E0019 exact-v3 不替换默认 release/v73。四个终端使用统一 helper：
+
+```bash
+tools/run_facee_e0019_repo_mujoco.sh scene 1.50
+tools/run_facee_e0019_repo_mujoco.sh deploy
+tools/run_facee_e0019_repo_mujoco.sh bridge
+tools/run_facee_e0019_repo_mujoco.sh request 1.50
+```
+
+这四步分别启动：带 0.41 m 无靠背椅子的 MuJoCo、配套 E0017 iteration-8 ONNX
+deploy、MuJoCo HTTP bridge、`sonic.sit_chair` 请求。scene 和 reference 使用同一个
+exact-v3 manifest 做距离选择；例如 `1.17 m` 同时选择 d1p20 的 chair layout 和
+reference。
+
+完整的环境准备、构建、四终端启动、证据生成和验收流程见
+[`facee_e0019_mujoco_sim_validation_workflow.md`](facee_e0019_mujoco_sim_validation_workflow.md)；
+早期缺口与排障记录保留在
+[`vigil_mujoco_facee_validation_20260803.md`](vigil_mujoco_facee_validation_20260803.md)。
 
 ## HTTP Protocol
 
@@ -84,7 +105,7 @@ python gear_sonic_deploy/scripts/run_vigil_bridge.py --host 127.0.0.1 --port 876
 | `protocol_version` | `vigil_groot_bridge_v1` |
 | `bridge.name` | `gear_sonic_vigil_bridge` |
 | `bridge.version` | `dry_run_phase1` |
-| `capabilities.actions` | `navigate.backward`, `navigate.forward`, `navigate.turn_left`, `navigate.turn_right` |
+| `capabilities.actions` | `navigate.backward`, `navigate.forward`, `navigate.turn_left`, `navigate.turn_right`, `sonic.sit_chair` |
 | `capabilities.observation` | `rgb`, `depth`, `robot_state` |
 | `capabilities.oracle_source` | `none` |
 
