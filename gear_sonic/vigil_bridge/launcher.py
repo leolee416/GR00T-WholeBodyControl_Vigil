@@ -33,6 +33,7 @@ DEFAULT_POLICY_OBSERVATION_CONFIG = (
     "policy/release/observation_config.yaml"
 )
 RUNTIME_ROOT = Path("/tmp/vigil_bridge_launcher")
+CONTAINER_STARTUP_REFERENCE = "/tmp/vigil_bridge_startup_reference.npz"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -122,6 +123,15 @@ def _build_parser() -> argparse.ArgumentParser:
             / "gear_sonic/vigil_bridge/data/facee_chair_13s_v2/manifest.json"
         ),
         help="Exact-distance FaceE chair reference manifest.",
+    )
+    start_parser.add_argument(
+        "--initial-chair-reference",
+        choices=("off", "d1p50"),
+        default="off",
+        help=(
+            "Opt in to a fixed chair startup pose. d1p50 makes INIT/PAUSE hold "
+            "the catalog's d1p50 frame 0 and starts policy control paused there."
+        ),
     )
     start_parser.add_argument(
         "--camera-service",
@@ -260,6 +270,7 @@ def start(args: argparse.Namespace) -> int:
 
     runtime_dir = _runtime_dir(args.session)
     runtime_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_initial_reference(args, runtime_dir)
     if not args.no_camera_service:
         _activate_camera_service(args, runtime_dir)
 
@@ -403,22 +414,36 @@ def _container_script(args: argparse.Namespace, log_path: Path) -> str:
 
 
 def _policy_script(args: argparse.Namespace, log_path: Path) -> str:
-    deploy_cmd = " ".join(
-        [
-            "./deploy.sh",
-            shlex.quote(args.robot_interface),
-            "--input-type",
-            shlex.quote(args.input_type),
-            "--output-type",
-            shlex.quote(args.output_type),
-            "--zmq-host",
-            shlex.quote(args.zmq_host),
-            "--checkpoint",
-            shlex.quote(args.policy_checkpoint),
-            "--obs-config",
-            shlex.quote(args.policy_observation_config),
-        ]
-    )
+    deploy_parts = [
+        "./deploy.sh",
+        shlex.quote(args.robot_interface),
+        "--input-type",
+        shlex.quote(args.input_type),
+        "--output-type",
+        shlex.quote(args.output_type),
+        "--zmq-host",
+        shlex.quote(args.zmq_host),
+        "--checkpoint",
+        shlex.quote(args.policy_checkpoint),
+        "--obs-config",
+        shlex.quote(args.policy_observation_config),
+    ]
+    startup_reference = _prepared_initial_reference_path(args)
+    copy_startup_reference = ""
+    if startup_reference is not None:
+        deploy_parts.extend(
+            [
+                "--startup-reference-npz",
+                shlex.quote(CONTAINER_STARTUP_REFERENCE),
+            ]
+        )
+        copy_startup_reference = (
+            "echo \"[launcher] copying cnpy-compatible startup reference "
+            f"{shlex.quote(str(startup_reference))}\"\n"
+            f"docker cp {shlex.quote(str(startup_reference))} "
+            f"{shlex.quote(args.container_name)}:{CONTAINER_STARTUP_REFERENCE}\n"
+        )
+    deploy_cmd = " ".join(deploy_parts)
     container_command = f"cd /workspace/g1_deploy && source scripts/setup_env.sh && printf '\\n' | {deploy_cmd}"
     return f"""\
         #!/usr/bin/env bash
@@ -427,6 +452,7 @@ def _policy_script(args: argparse.Namespace, log_path: Path) -> str:
         until docker inspect -f '{{{{.State.Running}}}}' {shlex.quote(args.container_name)} 2>/dev/null | grep -q true; do
           sleep 1
         done
+        {textwrap.indent(copy_startup_reference, "        ").rstrip()}
         echo "[launcher] container is running; starting deploy"
         docker exec -i {shlex.quote(args.container_name)} bash -lc {shlex.quote(container_command)} 2>&1 | tee {shlex.quote(str(log_path))}
     """
@@ -483,6 +509,8 @@ def _bridge_script(args: argparse.Namespace, policy_log: Path, bridge_log: Path)
         bridge_args.append("--enable-real-motion")
     if not args.no_auto_start_control:
         bridge_args.append("--auto-start-control")
+    if args.initial_chair_reference != "off":
+        bridge_args.append("--startup-reference-hold")
     if not args.camera_required:
         bridge_args.append("--real-camera-optional")
     bridge_args.extend(_audio_bridge_args(args))
@@ -574,6 +602,7 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
         raise SystemExit(
             f"chair motion catalog not found: {args.chair_motion_catalog}"
         )
+    _initial_reference_path(args)
     checkpoint = _deploy_path(args.policy_checkpoint)
     for suffix in ("_encoder.onnx", "_decoder.onnx"):
         model_path = Path(f"{checkpoint}{suffix}")
@@ -610,6 +639,83 @@ def _validate_start_inputs(args: argparse.Namespace) -> None:
 def _deploy_path(value: str) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else DEPLOY_DIR / path
+
+
+def _initial_reference_path(args: argparse.Namespace) -> Path | None:
+    tag = args.initial_chair_reference
+    if tag == "off":
+        return None
+    manifest_path = Path(args.chair_motion_catalog).expanduser().resolve()
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"cannot read chair motion catalog: {manifest_path}: {exc}") from exc
+    for record in manifest.get("motions", []):
+        if record.get("tag") == tag:
+            path = manifest_path.parent / str(record.get("file", ""))
+            if not path.is_file():
+                raise SystemExit(f"initial chair reference not found: {path}")
+            return path
+    raise SystemExit(f"chair motion catalog has no initial reference tag: {tag}")
+
+
+def _prepared_initial_reference_path(args: argparse.Namespace) -> Path | None:
+    if args.initial_chair_reference == "off":
+        return None
+    return _runtime_dir(args.session) / "startup_reference.npz"
+
+
+def _prepare_initial_reference(args: argparse.Namespace, runtime_dir: Path) -> Path | None:
+    """Repack the selected catalog asset into the subset/layout cnpy can read."""
+    source = _initial_reference_path(args)
+    if source is None:
+        return None
+    destination = runtime_dir / "startup_reference.npz"
+    try:
+        import numpy as np
+
+        with np.load(source, allow_pickle=False) as archive:
+            joint_pos = np.ascontiguousarray(archive["joint_pos"])
+            joint_vel = np.ascontiguousarray(archive["joint_vel"])
+            body_quat = np.ascontiguousarray(archive["body_quat_w"])
+    except (ImportError, OSError, KeyError, ValueError) as exc:
+        raise SystemExit(f"cannot prepare initial chair reference {source}: {exc}") from exc
+
+    frame_count = joint_pos.shape[0] if joint_pos.ndim == 2 else 0
+    expected_shapes = {
+        "joint_pos": (frame_count, 29),
+        "joint_vel": (frame_count, 29),
+        "body_quat_w": (frame_count, 4),
+    }
+    actual_shapes = {
+        "joint_pos": joint_pos.shape,
+        "joint_vel": joint_vel.shape,
+        "body_quat_w": body_quat.shape,
+    }
+    if frame_count == 0 or actual_shapes != expected_shapes:
+        raise SystemExit(
+            f"invalid initial chair reference shapes in {source}: {actual_shapes}"
+        )
+    if any(array.dtype not in (np.dtype("float32"), np.dtype("float64")) for array in (
+        joint_pos,
+        joint_vel,
+        body_quat,
+    )):
+        raise SystemExit(f"initial chair reference arrays must be float32 or float64: {source}")
+
+    # np.savez deliberately writes uncompressed entries. The bundled cnpy
+    # reader cannot consume the catalog's deflated ZIP64/Fortran-order arrays.
+    np.savez(
+        destination,
+        joint_pos=joint_pos,
+        joint_vel=joint_vel,
+        body_quat_w=body_quat,
+    )
+    print(
+        f"[launcher] prepared startup reference {args.initial_chair_reference}: "
+        f"{source} -> {destination}"
+    )
+    return destination
 
 
 def _audio_bridge_args(args: argparse.Namespace) -> list[str]:

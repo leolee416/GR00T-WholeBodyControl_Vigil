@@ -208,7 +208,14 @@ class PackedPublisher:
         self.socket.close(0)
         self.context.term()
 
-    def send_command(self, start: bool, stop: bool, planner: bool = True, pause: bool = False) -> None:
+    def send_command(
+        self,
+        start: bool,
+        stop: bool,
+        planner: bool = True,
+        pause: bool = False,
+        hold: bool = False,
+    ) -> None:
         fields = [
             {"name": "start", "dtype": "u8", "shape": [1]},
             {"name": "stop", "dtype": "u8", "shape": [1]},
@@ -217,6 +224,9 @@ class PackedPublisher:
         values = [int(start), int(stop), int(planner)]
         if pause:
             fields.append({"name": "pause", "dtype": "u8", "shape": [1]})
+            values.append(1)
+        if hold:
+            fields.append({"name": "hold", "dtype": "u8", "shape": [1]})
             values.append(1)
         header = {"v": 1, "endian": "le", "count": 1, "fields": fields}
         data = struct.pack("B" * len(values), *values)

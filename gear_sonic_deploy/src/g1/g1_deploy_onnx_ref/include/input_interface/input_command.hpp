@@ -29,7 +29,8 @@
  * @brief Wire format for the ZMQ "command" topic.
  *
  * Packed binary layout sent by the remote controller:
- *   { start: bool, stop: bool, planner: bool, pause?: bool, delta_heading?: f32/f64 }
+ *   { start: bool, stop: bool, planner: bool, pause?: bool, hold?: bool,
+ *     delta_heading?: f32/f64 }
  *
  * Multiple messages between two update() calls are accumulated using OR logic
  * for start/stop/pause (so a transient pulse is never lost), while the planner
@@ -39,6 +40,7 @@ struct CommandMessage {
   bool start = false;     ///< When true, request the control system to start.
   bool stop = false;      ///< When true, request an emergency / graceful stop.
   bool pause = false;     ///< When true, request default-pose pause without exiting deploy.
+  bool hold = false;      ///< When true, enter streamed control without advancing reference frame 0.
   bool planner = false;   ///< true  → planner mode  (use planner topic for locomotion)
                           ///< false → streamed-motion mode  (use pose topic)
   /// Optional absolute heading override (radians).  When set, the value is

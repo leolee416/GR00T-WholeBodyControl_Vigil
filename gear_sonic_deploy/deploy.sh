@@ -208,6 +208,7 @@ show_usage() {
     echo "  --obs-config PATH       Set the observation config file (default: policy/configs/example.yaml)"
     echo "  --planner PATH          Set the planner model path (default: planner/example.onnx)"
     echo "  --motion-data PATH      Set the motion data path (default: reference/example_motion/)"
+    echo "  --startup-reference-npz PATH  Preload a startup reference; INIT/PAUSE hold frame 0"
     echo "  --input-type TYPE       Set the input type (default: zmq_manager)"
     echo "  --output-type TYPE      Set the output type (default: ros2)"
     echo "  --zmq-host HOST         Set the ZMQ host (default: localhost)"
@@ -242,6 +243,7 @@ MOTION_DATA_DEFAULT="reference/example/"
 INPUT_TYPE_DEFAULT="manager"
 OUTPUT_TYPE_DEFAULT="all"
 ZMQ_HOST_DEFAULT="localhost"
+STARTUP_REFERENCE_NPZ_DEFAULT=""
 
 # Initialize with defaults (will be set after parsing)
 CHECKPOINT="$CHECKPOINT_DEFAULT"
@@ -251,6 +253,7 @@ MOTION_DATA="$MOTION_DATA_DEFAULT"
 INPUT_TYPE="$INPUT_TYPE_DEFAULT"
 OUTPUT_TYPE="$OUTPUT_TYPE_DEFAULT"
 ZMQ_HOST="$ZMQ_HOST_DEFAULT"
+STARTUP_REFERENCE_NPZ="$STARTUP_REFERENCE_NPZ_DEFAULT"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -289,6 +292,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             MOTION_DATA="$2"
+            shift 2
+            ;;
+        --startup-reference-npz)
+            if [[ -z "$2" ]]; then
+                echo -e "${RED}Error: --startup-reference-npz requires a path argument${NC}" >&2
+                exit 1
+            fi
+            STARTUP_REFERENCE_NPZ="$2"
             shift 2
             ;;
         --input-type)
@@ -380,12 +391,16 @@ CHECKPOINT_ENCODER="${CHECKPOINT}_encoder.onnx"
 # ZMQ_HOST is already set from argument parsing above
 
 # Additional flags for simulation mode
-EXTRA_ARGS=""
+ACTOR_EXTRA_ARGS=()
 if [[ "$ENV_TYPE" == "sim" ]]; then
-    EXTRA_ARGS="--disable-crc-check"
+    ACTOR_EXTRA_ARGS+=(--disable-crc-check)
     echo -e "${YELLOW}📋 Simulation mode: CRC check will be disabled${NC}"
     echo ""
 fi
+if [[ -n "$STARTUP_REFERENCE_NPZ" ]]; then
+    ACTOR_EXTRA_ARGS+=(--startup-reference-npz "$STARTUP_REFERENCE_NPZ")
+fi
+EXTRA_ARGS="${ACTOR_EXTRA_ARGS[*]}"
 
 # ============================================================================
 # Step 1: Check Prerequisites
@@ -551,25 +566,14 @@ if [[ "$confirm" =~ ^[Yy]$ ]] || [[ -z "$confirm" ]]; then
     echo -e "${GREEN}🚀 Starting deployment...${NC}"
     echo ""
     
-    # Build the command with optional extra args
-    if [[ -n "$EXTRA_ARGS" ]]; then
-        just run g1_deploy_onnx_ref "$TARGET" "$CHECKPOINT_DECODER" "$MOTION_DATA" \
-            --obs-config "$OBS_CONFIG" \
-            --encoder-file "$CHECKPOINT_ENCODER" \
-            --planner-file "$PLANNER" \
-            --input-type "$INPUT_TYPE" \
-            --output-type "$OUTPUT_TYPE" \
-            --zmq-host "$ZMQ_HOST" \
-            $EXTRA_ARGS
-    else
-        just run g1_deploy_onnx_ref "$TARGET" "$CHECKPOINT_DECODER" "$MOTION_DATA" \
-            --obs-config "$OBS_CONFIG" \
-            --encoder-file "$CHECKPOINT_ENCODER" \
-            --planner-file "$PLANNER" \
-            --input-type "$INPUT_TYPE" \
-            --output-type "$OUTPUT_TYPE" \
-            --zmq-host "$ZMQ_HOST"
-    fi
+    just run g1_deploy_onnx_ref "$TARGET" "$CHECKPOINT_DECODER" "$MOTION_DATA" \
+        --obs-config "$OBS_CONFIG" \
+        --encoder-file "$CHECKPOINT_ENCODER" \
+        --planner-file "$PLANNER" \
+        --input-type "$INPUT_TYPE" \
+        --output-type "$OUTPUT_TYPE" \
+        --zmq-host "$ZMQ_HOST" \
+        "${ACTOR_EXTRA_ARGS[@]}"
 else
     echo ""
     echo -e "${YELLOW}Deployment cancelled.${NC}"

@@ -75,3 +75,24 @@ TEST(StateLogger, ResetHistoryPreventsStaleResumeSamples) {
     EXPECT_DOUBLE_EQ(entry.last_action[0], 0.0);
   }
 }
+
+TEST(StateLogger, ExplicitReferenceEntryPadsMissingStartupHistory) {
+  StateLogger logger("", 32, 2, 2, 0.02, false);
+  StateLogger::Entry reference;
+  reference.base_quat = {1.0, 0.0, 0.0, 0.0};
+  reference.body_q = {4.0, 4.25};
+  reference.body_dq = {0.0, 0.0};
+  reference.last_action = {0.0, 0.0};
+  logger.ResetHistory(reference);
+
+  LogState(logger, 7.0, 1.0);
+  const auto history = logger.GetLatest(10, 0.02, false);
+  ASSERT_EQ(history.size(), 10U);
+  for (size_t i = 0; i < 9; ++i) {
+    EXPECT_DOUBLE_EQ(history[i].body_q[0], 4.0);
+    EXPECT_DOUBLE_EQ(history[i].body_dq[0], 0.0);
+    EXPECT_DOUBLE_EQ(history[i].last_action[0], 0.0);
+  }
+  EXPECT_DOUBLE_EQ(history[9].body_q[0], 7.0);
+  EXPECT_DOUBLE_EQ(history[9].last_action[0], 1.0);
+}

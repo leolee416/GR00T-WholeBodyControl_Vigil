@@ -386,3 +386,64 @@ def test_real_auto_start_sends_command_before_waiting_for_state(monkeypatch: pyt
     assert health["ok"] is True
     assert health["executor_started"] is True
     assert events.index("command:1:0:1:0") < events.index("wait_for_state")
+
+
+def test_real_startup_reference_enters_streamed_mode_without_planner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class FakePublisher:
+        def __init__(self, bind_host: str, port: int, verbose: bool = False) -> None:
+            pass
+
+        def send_command(
+            self,
+            start: bool,
+            stop: bool,
+            planner: bool = True,
+            pause: bool = False,
+            hold: bool = False,
+        ) -> None:
+            events.append(
+                f"command:{int(start)}:{int(stop)}:{int(planner)}:{int(pause)}:{int(hold)}"
+            )
+
+        def close(self) -> None:
+            pass
+
+    class FakeStateSubscriber:
+        def __init__(self, host: str, port: int, topic: str) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        def latest(self) -> None:
+            return None
+
+        def wait_for_state(self, timeout: float) -> Any:
+            return object()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("gear_sonic.vigil_bridge.real_adapter.PackedPublisher", FakePublisher)
+    monkeypatch.setattr("gear_sonic.vigil_bridge.real_adapter.StateSubscriber", FakeStateSubscriber)
+
+    runtime = RealRuntimeClient(
+        RealBridgeConfig(
+            motion_enabled=True,
+            auto_start_control=True,
+            startup_reference_hold=True,
+            camera_enabled=False,
+            camera_required=False,
+            state_timeout_s=0.01,
+            startup_command_burst_s=0.0,
+        )
+    )
+
+    health = runtime.start()
+
+    assert health["ok"] is True
+    assert events == ["command:1:0:0:0:1"]

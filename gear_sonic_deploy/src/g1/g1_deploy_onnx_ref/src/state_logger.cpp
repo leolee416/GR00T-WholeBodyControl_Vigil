@@ -177,10 +177,11 @@ size_t StateLogger::size() const {
   return size_;
 }
 
-void StateLogger::ResetHistory() {
+void StateLogger::ResetHistory(std::optional<Entry> padding_entry) {
   std::lock_guard<std::mutex> lock(ring_mutex_);
   start_ = 0;
   size_ = 0;
+  history_padding_entry_ = std::move(padding_entry);
 }
 
 std::vector<Entry> StateLogger::GetLatest(size_t n, bool newest_first) const {
@@ -188,7 +189,8 @@ std::vector<Entry> StateLogger::GetLatest(size_t n, bool newest_first) const {
   if (size_ == 0) {
     std::vector<Entry> empty_history;
     empty_history.reserve(n);
-    for (size_t i = 0; i < n; ++i) { empty_history.push_back(makeZeroEntry_()); }
+    const Entry padding = history_padding_entry_.value_or(makeZeroEntry_());
+    for (size_t i = 0; i < n; ++i) { empty_history.push_back(padding); }
     return empty_history;
   }
   const size_t count = n < size_ ? n : size_;
@@ -204,8 +206,10 @@ std::vector<Entry> StateLogger::GetLatest(size_t n, bool newest_first) const {
   // the measured reset state, while last_action is naturally zero-initialized.
   if (out.size() < n) {
     const size_t missing = n - out.size();
-    const Entry& earliest = ring_[start_];
-    for (size_t i = 0; i < missing; ++i) { out.push_back(earliest); }
+    const Entry& padding = history_padding_entry_.has_value()
+        ? history_padding_entry_.value()
+        : ring_[start_];
+    for (size_t i = 0; i < missing; ++i) { out.push_back(padding); }
   }
   // Reverse if oldest_first requested
   if (!newest_first) { std::reverse(out.begin(), out.end()); }
@@ -218,9 +222,11 @@ std::vector<Entry> StateLogger::GetLatest(size_t n, double sample_dt_seconds, bo
   std::vector<Entry> out;
   if (n == 0) return out;
   if (size_ == 0) {
-    // Pad with zeros if requested more than available (consistent with first overload)
+    // Use an explicit reset/reference entry when configured; otherwise retain
+    // the legacy zero behavior before the first measured sample.
     out.reserve(n);
-    for (size_t k = 0; k < n; ++k) { out.push_back(makeZeroEntry_()); }
+    const Entry padding = history_padding_entry_.value_or(makeZeroEntry_());
+    for (size_t k = 0; k < n; ++k) { out.push_back(padding); }
     return out;
   }
   out.reserve(n);
@@ -243,8 +249,10 @@ std::vector<Entry> StateLogger::GetLatest(size_t n, double sample_dt_seconds, bo
       // first-push fill rather than creating an out-of-distribution zero state.
       if (out.size() < n) {
         const size_t missing = n - out.size();
-        const Entry& earliest = ring_[start_];
-        for (size_t k = 0; k < missing; ++k) { out.push_back(earliest); }
+        const Entry& padding = history_padding_entry_.has_value()
+            ? history_padding_entry_.value()
+            : ring_[start_];
+        for (size_t k = 0; k < missing; ++k) { out.push_back(padding); }
       }
       // Reverse if oldest_first requested
       if (!newest_first) { std::reverse(out.begin(), out.end()); }
@@ -276,8 +284,10 @@ std::vector<Entry> StateLogger::GetLatest(size_t n, double sample_dt_seconds, bo
   // enough into pre-history.
   if (out.size() < n) {
     const size_t missing = n - out.size();
-    const Entry& earliest = ring_[start_];
-    for (size_t k = 0; k < missing; ++k) { out.push_back(earliest); }
+    const Entry& padding = history_padding_entry_.has_value()
+        ? history_padding_entry_.value()
+        : ring_[start_];
+    for (size_t k = 0; k < missing; ++k) { out.push_back(padding); }
   }
   // Reverse if oldest_first requested
   if (!newest_first) { std::reverse(out.begin(), out.end()); }

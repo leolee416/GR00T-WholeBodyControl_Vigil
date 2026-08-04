@@ -119,6 +119,14 @@ def main() -> None:
         help="Send WBC start/planner command on bridge reset/start.",
     )
     parser.add_argument(
+        "--startup-reference-hold",
+        action="store_true",
+        help=(
+            "With auto-start, enter streamed-reference control paused on the "
+            "actor's preloaded frame 0 instead of starting the planner."
+        ),
+    )
+    parser.add_argument(
         "--send-stop-on-halt",
         action="store_true",
         help="Also send deploy stop=True on /halt. Off by default because it can terminate deploy.",
@@ -256,6 +264,7 @@ def _create_service(args: argparse.Namespace) -> VigilBridgeService:
                 camera_timeout_s=args.camera_timeout,
                 motion_enabled=args.enable_real_motion,
                 auto_start_control=args.auto_start_control,
+                startup_reference_hold=args.startup_reference_hold,
                 stop_on_halt=args.send_stop_on_halt,
                 chair_motion_catalog=args.chair_motion_catalog,
                 rollout_output_dir=args.rollout_output_dir,

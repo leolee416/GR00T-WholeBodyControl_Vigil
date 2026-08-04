@@ -189,9 +189,10 @@ class StateLogger {
 
   // Drop only the in-memory observation history. CSV files and the monotonic
   // sample index remain intact. Call when entering CONTROL so a resume cannot
-  // feed stale pre-pause samples into the policy; the first new real sample is
-  // then repeated by GetLatest() to implement repeat_reset.
-  void ResetHistory();
+  // feed stale pre-pause samples into the policy. If a padding entry is
+  // supplied, GetLatest() uses it for unavailable pre-history; otherwise the
+  // first new measured sample is repeated (Isaac Lab repeat_reset semantics).
+  void ResetHistory(std::optional<Entry> padding_entry = std::nullopt);
 
   // Returns exactly n entries.  Once at least one real sample exists, missing
   // startup history is padded by repeating the earliest real sample (Isaac
@@ -233,6 +234,7 @@ class StateLogger {
   std::vector<Entry> ring_;
   size_t start_ = 0; // index of the oldest element
   size_t size_ = 0;  // number of valid elements
+  std::optional<Entry> history_padding_entry_;
 
   // Index counter
   std::atomic<uint64_t> next_index_ {0};

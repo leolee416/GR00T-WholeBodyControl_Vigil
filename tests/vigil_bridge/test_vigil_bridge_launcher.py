@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import zipfile
 
+import numpy as np
 import pytest
 
 import gear_sonic.vigil_bridge.launcher as launcher
+from gear_sonic.vigil_bridge.chair_motion_catalog import EXACT_V3_CATALOG
 
 
 def _parse_start_args(*args: str):
@@ -95,6 +98,51 @@ def test_policy_script_can_opt_in_to_facee_v73_noheight_models() -> None:
         "--obs-config policy/facee_v73_noheight/observation_config.yaml"
         in script
     )
+
+
+def test_d1p50_startup_reference_is_copied_and_holds_streamed_frame_zero() -> None:
+    args = _parse_start_args(
+        "--chair-motion-catalog",
+        str(EXACT_V3_CATALOG),
+        "--initial-chair-reference",
+        "d1p50",
+    )
+
+    policy_script = launcher._policy_script(args, Path("/tmp/policy.log"))
+    bridge_script = launcher._bridge_script(
+        args, Path("/tmp/policy.log"), Path("/tmp/bridge.log")
+    )
+
+    assert "startup_reference.npz" in policy_script
+    assert "docker cp" in policy_script
+    assert "--startup-reference-npz" in policy_script
+    assert launcher.CONTAINER_STARTUP_REFERENCE in policy_script
+    assert "--startup-reference-hold" in bridge_script
+
+
+def test_d1p50_startup_reference_is_repacked_for_cnpy(tmp_path: Path) -> None:
+    args = _parse_start_args(
+        "--chair-motion-catalog",
+        str(EXACT_V3_CATALOG),
+        "--initial-chair-reference",
+        "d1p50",
+    )
+
+    prepared = launcher._prepare_initial_reference(args, tmp_path)
+
+    assert prepared == tmp_path / "startup_reference.npz"
+    with zipfile.ZipFile(prepared) as archive:
+        assert set(archive.namelist()) == {
+            "joint_pos.npy",
+            "joint_vel.npy",
+            "body_quat_w.npy",
+        }
+        assert all(info.compress_type == zipfile.ZIP_STORED for info in archive.infolist())
+    with np.load(prepared, allow_pickle=False) as archive:
+        assert archive["joint_pos"].shape == (650, 29)
+        assert archive["joint_pos"].flags.c_contiguous
+        assert archive["joint_vel"].flags.c_contiguous
+        assert archive["body_quat_w"].flags.c_contiguous
 
 
 def test_audio_options_require_explicit_audio_enable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

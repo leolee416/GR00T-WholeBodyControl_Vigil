@@ -88,6 +88,7 @@
 
 // Motion Data Reader
 #include "../include/motion_data_reader.hpp"
+#include "../include/startup_reference.hpp"
 
 // Math utilities
 #include "../include/math_utils.hpp"
@@ -216,6 +217,8 @@ class G1Deploy {
     
     // Current motion and frame (using shared_ptr for thread safety)
     std::shared_ptr<const MotionSequence> current_motion_ = nullptr;
+    std::shared_ptr<const MotionSequence> startup_reference_motion_ = nullptr;
+    std::array<double, G1_NUM_MOTOR> hold_pose_angles_{};
     int current_frame_ = 0;
     int saved_frame_for_observation_window_ = 0; // for observation window
     std::mutex current_motion_mutex_; // for current motion and frame synchronization
@@ -2163,7 +2166,8 @@ class G1Deploy {
       std::string zmq_out_topic = "g1_debug",
       bool enable_motion_recording = false,
       std::array<double, 3> initial_compliance = {0.05, 0.05, 0.0},
-      double initial_max_close_ratio = 1.0)
+      double initial_max_close_ratio = 1.0,
+      std::string startup_reference_npz = "")
       : time_(0.0),
         publish_dt_(0.002),
         control_dt_(0.02),
@@ -2185,6 +2189,7 @@ class G1Deploy {
         //env(ORT_LOGGING_LEVEL_WARNING, "G1Deploy"),
         model_path(model_file_path),
         planner_path(planner_file_path) {
+      hold_pose_angles_ = default_angles;
       
       // Initialize ChannelFactory
       ChannelFactory::Instance()->Init(0, networkInterface);
@@ -2296,6 +2301,26 @@ class G1Deploy {
         std::cout << "Control system cannot function without motion data!" << std::endl;
         std::cout << "Exiting..." << std::endl;
         throw std::runtime_error("Failed to load motion data");
+      }
+
+      if (!startup_reference_npz.empty()) {
+        auto startup_motion = startup_reference::Load(startup_reference_npz);
+        startup_reference_motion_ = startup_motion;
+        motion_reader_.motions.insert(motion_reader_.motions.begin(), startup_motion);
+        motion_reader_.current_motion_index_ = 0;
+        {
+          std::lock_guard<std::mutex> lock(current_motion_mutex_);
+          current_motion_ = startup_reference_motion_;
+          current_frame_ = 0;
+        }
+        for (int motor = 0; motor < G1_NUM_MOTOR; ++motor) {
+          hold_pose_angles_[motor] =
+              startup_reference_motion_->JointPositions(0)[isaaclab_to_mujoco[motor]];
+        }
+        operator_state.play = false;
+        std::cout << "[StartupReference] Loaded " << startup_reference_npz
+                  << " with " << startup_reference_motion_->timesteps
+                  << " frames; INIT and PAUSE will hold frame 0" << std::endl;
       }
       
       // Initialize control policy
@@ -2439,6 +2464,8 @@ class G1Deploy {
       robot_config["is_using_encoder"] = is_using_encoder_;
       robot_config["policy_fp16"] = policy_fp16;
       robot_config["planner_fp16"] = planner_fp16;
+      robot_config["startup_reference_npz"] =
+          startup_reference_npz.empty() ? "none" : startup_reference_npz;
 
       // Initialize state logger with complete robot configuration
       try {
@@ -2725,7 +2752,7 @@ class G1Deploy {
 
     /**
      * @brief INIT state handler: ramp the robot from its current pose to the
-     *        default standing angles over `duration_` seconds (linear interpolation).
+     *        configured hold pose over `duration_` seconds (linear interpolation).
      *
      * Called at 50 Hz until the ramp completes, at which point the state machine
      * transitions to WAIT_FOR_CONTROL and the Dex3 hands open.
@@ -2740,7 +2767,7 @@ class G1Deploy {
       MotorCommand motor_command_tmp;
       for (int i = 0; i < G1_NUM_MOTOR; ++i) {
         motor_command_tmp.tau_ff.at(i) = 0.0;
-        motor_command_tmp.q_target.at(i) = static_cast<float>(default_angles[i]);
+        motor_command_tmp.q_target.at(i) = static_cast<float>(hold_pose_angles_[i]);
         motor_command_tmp.dq_target.at(i) = 0.0;
         motor_command_tmp.kp.at(i) = kps[i];
         motor_command_tmp.kd.at(i) = kds[i];
@@ -2751,7 +2778,7 @@ class G1Deploy {
           double ratio = std::clamp(time_ / duration_, 0.0, 1.0);
           double current_pos = ls->motor_state()[i].q();
           motor_command_tmp.q_target.at(i) =
-              static_cast<float>(current_pos * (1.0 - ratio) + default_angles[i] * ratio);
+              static_cast<float>(current_pos * (1.0 - ratio) + hold_pose_angles_[i] * ratio);
         }
         dex3_hands_.close(true);
         dex3_hands_.close(false);
@@ -2769,12 +2796,37 @@ class G1Deploy {
       MotorCommand motor_command_tmp;
       for (int i = 0; i < G1_NUM_MOTOR; ++i) {
         motor_command_tmp.tau_ff.at(i) = 0.0;
-        motor_command_tmp.q_target.at(i) = static_cast<float>(default_angles[i]);
+        motor_command_tmp.q_target.at(i) = static_cast<float>(hold_pose_angles_[i]);
         motor_command_tmp.dq_target.at(i) = 0.0;
         motor_command_tmp.kp.at(i) = kps[i];
         motor_command_tmp.kd.at(i) = kds[i];
       }
       return motor_command_tmp;
+    }
+
+    std::optional<StateLogger::Entry> CreateStartupHistoryPadding() const {
+      if (!startup_reference_motion_ || startup_reference_motion_->timesteps <= 0 ||
+          startup_reference_motion_->GetNumJoints() != G1_NUM_MOTOR ||
+          startup_reference_motion_->GetNumBodyQuaternions() < 1) {
+        return std::nullopt;
+      }
+
+      StateLogger::Entry entry;
+      const double* reference_q = startup_reference_motion_->JointPositions(0);
+      const auto& reference_quat = startup_reference_motion_->BodyQuaternions(0)[0];
+      entry.base_quat = reference_quat;
+      entry.body_torso_quat = reference_quat;
+      entry.body_q.resize(G1_NUM_MOTOR);
+      entry.body_dq.assign(G1_NUM_MOTOR, 0.0);
+      entry.last_action.assign(G1_NUM_MOTOR, 0.0);
+      for (int joint = 0; joint < G1_NUM_MOTOR; ++joint) {
+        const int hardware_index = mujoco_to_isaaclab[joint];
+        entry.body_q[joint] = reference_q[joint] - default_angles[hardware_index];
+      }
+      entry.motion_name = startup_reference_motion_->name;
+      entry.encoder_mode = startup_reference_motion_->GetEncodeMode();
+      entry.play = false;
+      return entry;
     }
 
     void PublishRobotConfig() {
@@ -2850,7 +2902,7 @@ class G1Deploy {
         }
       } else {
         for (int i = 0; i < G1_NUM_MOTOR; ++i) {
-          pause_start_angles_.at(i) = default_angles[i];
+          pause_start_angles_.at(i) = hold_pose_angles_[i];
         }
       }
       pause_start_captured_ = true;
@@ -2858,7 +2910,7 @@ class G1Deploy {
       operator_state.pause = false;
       ResetPlannerAndMotionForPause();
       program_state_ = ProgramState::PAUSE_PREPARE;
-      std::cout << "[Control] Pause requested: ramping to default_angles" << std::endl;
+      std::cout << "[Control] Pause requested: ramping to configured hold pose" << std::endl;
     }
 
     bool PausePrepareControl() {
@@ -2874,7 +2926,7 @@ class G1Deploy {
         const double ratio = std::clamp(pause_time_ / duration_, 0.0, 1.0);
         for (int i = 0; i < G1_NUM_MOTOR; ++i) {
           motor_command_tmp.q_target.at(i) =
-              static_cast<float>(pause_start_angles_.at(i) * (1.0 - ratio) + default_angles[i] * ratio);
+              static_cast<float>(pause_start_angles_.at(i) * (1.0 - ratio) + hold_pose_angles_[i] * ratio);
         }
         dex3_hands_.close(true);
         dex3_hands_.close(false);
@@ -2883,7 +2935,7 @@ class G1Deploy {
         pause_start_captured_ = false;
         dex3_hands_.open(true);
         dex3_hands_.open(false);
-        std::cout << "[Control] Pause Ready: holding default_angles" << std::endl;
+        std::cout << "[Control] Pause Ready: holding configured hold pose" << std::endl;
       }
 
       motor_command_buffer_.SetData(motor_command_tmp);
@@ -3969,15 +4021,15 @@ class G1Deploy {
             }
             std::cout << "[Control] DEBUG: operator_state.start=true, transitioning to CONTROL state" << std::endl;
             // The policy history must not contain stale samples from a prior
-            // CONTROL interval. The first measured state on the next tick is
-            // repeated into the missing slots by StateLogger::GetLatest(),
-            // matching Isaac Lab/MuJoCo repeat_reset startup semantics.
+            // CONTROL interval. An opt-in startup reference supplies the
+            // unavailable pre-history; otherwise the first measured state is
+            // repeated by StateLogger::GetLatest() (repeat_reset semantics).
             if (state_logger_) {
-              state_logger_->ResetHistory();
+              state_logger_->ResetHistory(CreateStartupHistoryPadding());
             }
-            // PAUSED holds default_angles, whose normalized SONIC action is
-            // zero. Do not repeat a stale pre-pause policy action into the new
-            // history window.
+            // The optional startup-reference entry represents the configured
+            // hold pose while keeping last_action at zero. Do not repeat a
+            // stale pre-pause policy action into the new history window.
             last_action.fill(0.0);
             program_state_ = ProgramState::CONTROL;
           }
@@ -4301,6 +4353,7 @@ int main(int argc, char const* argv[]) {
     std::cout << "  --disable-crc-check: disable CRC validation for MuJoCo simulation" << std::endl;
     std::cout << "  --obs-config <path>: specify observation configuration YAML file" << std::endl;
     std::cout << "  --encoder-file <path>: specify encoder ONNX file (optional)" << std::endl;
+    std::cout << "  --startup-reference-npz <path>: preload a joint-based NPZ; INIT/PAUSE hold frame 0" << std::endl;
     std::cout << "  --planner-precision <16|32>: specify precision to run the planner model at (default: 16)" << std::endl;
     std::cout << "  --policy-precision <16|32>: specify precision to run the policy model at (default: 32)" << std::endl;
     std::cout << "  --zmq-host <host>: ZMQ server host (default: localhost)" << std::endl;
@@ -4341,6 +4394,7 @@ int main(int argc, char const* argv[]) {
   bool disableCrcCheck = false;\
   std::string obsConfigPath = "";
   std::string encoderFile = "";
+  std::string startupReferenceNpz = "";
   std::string targetMotionLogfile = "";
   std::string plannerMotionLogfile = "";
   std::string policyInputLogfile = "";
@@ -4382,6 +4436,15 @@ int main(int argc, char const* argv[]) {
         i++; // Skip the next argument since it's the encoder file path
       } else {
         std::cerr << "Error: --encoder-file requires a path argument" << std::endl;
+        exit(1);
+      }
+    } else if (std::string(argv[i]) == "--startup-reference-npz") {
+      if (i + 1 < argc) {
+        startupReferenceNpz = argv[i + 1];
+        std::cout << "[INFO] Using startup reference: " << startupReferenceNpz << std::endl;
+        i++;
+      } else {
+        std::cerr << "Error: --startup-reference-npz requires a path argument" << std::endl;
         exit(1);
       }
     } else if (std::string(argv[i]) == "--planner-file") {
@@ -4623,7 +4686,8 @@ int main(int argc, char const* argv[]) {
     zmq_out_topic,
     enableMotionRecording,
     initial_compliance,
-    initial_max_close_ratio
+    initial_max_close_ratio,
+    startupReferenceNpz
   );
   std::cout << "[DEBUG] G1Deploy object created successfully!" << std::endl;
   

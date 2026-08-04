@@ -8,7 +8,7 @@
  *   Topic      | Purpose
  *   -----------|--------
  *   command    | High-level control (start / stop / pause / mode switch).
- *              | Wire format: `{ start: bool, stop: bool, planner: bool, pause?: bool }`
+ *              | Wire format: `{ start: bool, stop: bool, planner: bool, pause?: bool, hold?: bool }`
  *   planner    | Per-frame locomotion commands (mode, movement, facing, speed, height,
  *              | optional upper-body / hand / VR data).  Active in PLANNER mode.
  *   pose       | Streamed motion frames (joint_pos, joint_vel, body_quat, …).
@@ -146,7 +146,7 @@ class ZMQManager : public InputInterface {
       std::cout << "[ZMQManager] Initialized (default: PLANNER mode)" << std::endl;
       std::cout << "  - Host: " << zmq_host_ << ":" << zmq_port_ << std::endl;
       std::cout << "  - Command topic: '" << command_topic_ << "' (start/stop/pause/mode)" << std::endl;
-      std::cout << "    Format: { start: bool, stop: bool, planner: bool, pause?: bool }" << std::endl;
+      std::cout << "    Format: { start: bool, stop: bool, planner: bool, pause?: bool, hold?: bool }" << std::endl;
       std::cout << "  - Planner topic: '" << planner_topic_ << "' (movement)" << std::endl;
       std::cout << "  - Pose topic: '" << pose_topic_ << "' (streamed motion)" << std::endl;
     }
@@ -163,6 +163,7 @@ class ZMQManager : public InputInterface {
       start_control_ = false;
       stop_control_ = false;
       pause_control_ = false;
+      hold_reference_ = false;
       
       // Handle stdin shortcuts
       char ch;
@@ -241,6 +242,7 @@ class ZMQManager : public InputInterface {
           if (latest_command_.pause) {
             pause_control_ = true;
           }
+          hold_reference_ = latest_command_.hold;
 
           // Handle mode switching
           ManagedMode new_mode = latest_command_.planner ? ManagedMode::PLANNER : ManagedMode::STREAMED_MOTION;
@@ -407,7 +409,8 @@ class ZMQManager : public InputInterface {
       if (start_control_ && !operator_state.start) {
         operator_state.start = true;
         std::lock_guard<std::mutex> lock(current_motion_mutex);
-        operator_state.play = (active_mode_ == ManagedMode::STREAMED_MOTION);
+        operator_state.play =
+            (active_mode_ == ManagedMode::STREAMED_MOTION) && !hold_reference_;
         reinitialize_heading = true;
       }
 
@@ -725,12 +728,13 @@ class ZMQManager : public InputInterface {
       
       if (hdr.fields.empty() || bufs.empty()) return;
       
-      int start_idx = -1, stop_idx = -1, planner_idx = -1, pause_idx = -1;
+      int start_idx = -1, stop_idx = -1, planner_idx = -1, pause_idx = -1, hold_idx = -1;
       for (size_t i = 0; i < hdr.fields.size(); ++i) {
         if (hdr.fields[i].name == "start") start_idx = static_cast<int>(i);
         else if (hdr.fields[i].name == "stop") stop_idx = static_cast<int>(i);
         else if (hdr.fields[i].name == "planner") planner_idx = static_cast<int>(i);
         else if (hdr.fields[i].name == "pause") pause_idx = static_cast<int>(i);
+        else if (hdr.fields[i].name == "hold") hold_idx = static_cast<int>(i);
       }
       
       if (start_idx < 0 || stop_idx < 0 || planner_idx < 0) {
@@ -816,6 +820,26 @@ class ZMQManager : public InputInterface {
           }
         }
       }
+
+      // Decode optional streamed-reference frame hold.
+      if (hold_idx >= 0) {
+        const auto& hold_buf = bufs[hold_idx];
+        const auto& hold_field = hdr.fields[hold_idx];
+        if (hold_field.dtype == "bool" || hold_field.dtype == "u8") {
+          uint8_t val = 0;
+          if (hold_buf.size >= sizeof(uint8_t)) {
+            std::memcpy(&val, hold_buf.data, sizeof(uint8_t));
+            cmd.hold = (val != 0);
+          }
+        } else if (hold_field.dtype == "i32") {
+          int32_t val = 0;
+          if (hold_buf.size >= sizeof(int32_t)) {
+            std::memcpy(&val, hold_buf.data, sizeof(int32_t));
+            if (needs_swap) val = byte_swap(val);
+            cmd.hold = (val != 0);
+          }
+        }
+      }
       
       // Update buffer with OR logic to accumulate start/stop signals
       std::lock_guard<std::mutex> lock(command_mutex_);
@@ -832,12 +856,13 @@ class ZMQManager : public InputInterface {
       latest_command_.stop = latest_command_.stop || cmd.stop;
       latest_command_.pause = latest_command_.pause || cmd.pause;
       latest_command_.planner = cmd.planner;  // Overwrite (mode should be latest)
+      latest_command_.hold = cmd.hold;
       latest_command_.valid = true;
       
       if constexpr (DEBUG_LOGGING) {
         std::cout << "[ZMQManager] Command received: start=" << cmd.start 
                   << ", stop=" << cmd.stop << ", pause=" << cmd.pause
-                  << ", planner=" << cmd.planner << std::endl;
+                  << ", planner=" << cmd.planner << ", hold=" << cmd.hold << std::endl;
       }
     }
     
@@ -1318,6 +1343,7 @@ class ZMQManager : public InputInterface {
     bool start_control_ = false;   ///< Start request from command message.
     bool stop_control_ = false;    ///< Stop request from command message.
     bool pause_control_ = false;   ///< Pause request from command message.
+    bool hold_reference_ = false;  ///< Keep streamed reference paused at its current frame on start.
 
     /// True once the planner has been initialised and is generating motions.
     bool is_planner_ready_ = false;

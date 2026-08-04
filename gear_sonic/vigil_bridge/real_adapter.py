@@ -90,6 +90,7 @@ class RealBridgeConfig:
     camera_timeout_s: float = 3.0
     motion_enabled: bool = False
     auto_start_control: bool = False
+    startup_reference_hold: bool = False
     stop_on_halt: bool = False
     chair_motion_catalog: str | None = None
     rollout_output_dir: str = "outputs/vigil_rollouts"
@@ -217,15 +218,22 @@ class RealRuntimeClient:
 
     def send_start_control(self) -> None:
         publisher = self._require_publisher()
+        planner = not self.config.startup_reference_hold
         deadline = time.monotonic() + max(self.config.startup_command_burst_s, 0.0)
         period_s = max(self.config.startup_command_period_s, 0.01)
         while True:
-            publisher.send_command(start=True, stop=False, planner=True)
+            if self.config.startup_reference_hold:
+                publisher.send_command(
+                    start=True, stop=False, planner=False, hold=True
+                )
+            else:
+                publisher.send_command(start=True, stop=False, planner=True)
             remaining_s = deadline - time.monotonic()
             if remaining_s <= 0.0:
                 break
             time.sleep(min(period_s, remaining_s))
-        self.send_idle_burst(duration=0.5, preserve_facing=False)
+        if planner:
+            self.send_idle_burst(duration=0.5, preserve_facing=False)
 
     def send_idle_burst(self, duration: float, preserve_facing: bool = False) -> None:
         publisher = self._require_publisher()
@@ -539,6 +547,7 @@ class RealRuntimeClient:
                 "paused": self.paused,
                 "ready_for_motion": ready_for_motion,
                 "auto_start_control": self.config.auto_start_control,
+                "startup_reference_hold": self.config.startup_reference_hold,
                 "max_speed_mps": self.config.max_move_speed_mps,
             },
         }
