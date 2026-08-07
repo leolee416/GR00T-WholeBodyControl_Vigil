@@ -22,6 +22,8 @@ This index lists the Codex-facing documentation for this repository.
 
 - [FaceE 真机 reference joint order 根因、源码证据与复现](integration/facee_reference_joint_order_root_cause.md)
 
+- [FaceE E0019 真机 sit-chair policy 可复现流程](integration/facee_e0019_real_robot_reproduction.md)
+
 - `RUNTIME_BRIDGE_OVERVIEW.md`
   Short runtime bridge overview for external agents/clients and operator lifecycle.
 
