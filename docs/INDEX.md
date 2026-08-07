@@ -18,6 +18,8 @@ This index lists the Codex-facing documentation for this repository.
 
 ## Integration
 
+- [Host 网页相机监控（浏览器实时画面）](integration/camera_web_monitor.md)
+
 - [FaceE 按椅距选择坐下 reference](integration/facee_chair_distance_motion.md)
 
 - [FaceE 真机 reference joint order 根因、源码证据与复现](integration/facee_reference_joint_order_root_cause.md)
