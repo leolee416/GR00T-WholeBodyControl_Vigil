@@ -26,6 +26,64 @@ tools/fetch_facee_stage1_generalist_yaw_assets.sh \
 原始 PKL 重新生成。它从已审计 full403 精确抽取，18 个 NPZ 的字节和 SHA 均保持
 不变。`--with-full-catalog` 只在需要完整 403 条时使用。
 
+### 当前权重位置
+
+训练得到的 PyTorch checkpoint 位于：
+
+```text
+/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/
+R0010_task18_sitstand_yaw_vision/E0038_full_sit_8192_ppo/
+train_8192_stack256x96/train/model_step_000096.pt
+```
+
+OSS 上保存了 checkpoint 和真机使用的 ONNX：
+
+```text
+oss://xrobot-data/fs/r2s_ego_exp/GR00T-WholeBodyControl_Vigil/policy/
+facee_stage1_generalist_yaw/
+├── model_step_000096.pt
+├── model_step_000096_encoder.onnx
+└── model_step_000096_decoder.onnx
+```
+
+拉取后真机以 `model_encoder.onnx`、`model_decoder.onnx` 命名；仓库不提交这两个
+重文件。`.pt` 只用于复现和重新导出，不参与 C++ TensorRT 推理。
+
+### 当前 motion 位置和 OSS 范围
+
+原始训练/仿真数据位于：
+
+```text
+/workspace/fangs1@xiaopeng.com/workspace_fs/facee_crosssim_dual_agent_v1/rounds/
+R0010_task18_sitstand_yaw_vision/E0037_extended_range_crosssim/
+extended_data/directional/
+├── manifest.json
+└── training_library/
+    ├── robot/
+    ├── objects/
+    └── object_usd/
+```
+
+Robot PKL 是 313 帧、24 Hz、MuJoCo 顺序的源数据。真机不直接读取 PKL；部署 NPZ
+已经按合约转换为 650 帧、50 Hz、IsaacLab 顺序。目前 OSS 上传了以下三套
+Sit-only catalog，均不包含 Stand：
+
+| OSS 子目录 | 距离 | yaw | 条数 | 说明 |
+| --- | --- | --- | ---: | --- |
+| `motion_catalog/` | 1.45 m | 0/5/10/15/20/25° | 6 | clean6 首次预检 |
+| `motion_catalog_hardware18/` | 1.45 m | 0/5/10/15/20/25° | 6 | clean |
+| `motion_catalog_hardware18/` | 2.00 m | -15/-10/-5/0/5/10° | 6 | non-clean，需显式 opt-in |
+| `motion_catalog_hardware18/` | 2.40 m | -15/-10/-5/0/5/10° | 6 | non-clean，需显式 opt-in |
+| `motion_catalog_full403/` | 0.90–2.40 m，步长 0.05 m | -30–30°，步长 5° | 403 | 完整 Sit 库 |
+
+三套 catalog 有重复条件：clean6 和 hardware18 都是 full403 的子集，因此 OSS 上
+唯一的 `(distance, yaw)` 条件仍是 full403 的 403 条。当前上机应选仓库中的：
+
+```text
+gear_sonic/vigil_bridge/data/
+facee_stage1_generalist_yaw_hardware18/manifest.json
+```
+
 ## 测试范围
 
 完整 Sit catalog 为 31 个距离（`0.90–2.40 m`，步长 `0.05 m`）× 13 个 yaw
