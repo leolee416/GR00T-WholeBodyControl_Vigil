@@ -152,7 +152,10 @@ class RealRuntimeClient:
             state = self.wait_for_state(timeout=self.config.state_timeout_s)
             if state is None:
                 raise RuntimeError("no real-robot g1_debug state received")
-            if self.config.camera_required and self._wait_for_camera(self.config.camera_timeout_s) is None:
+            if (
+                self.config.camera_required
+                and self._wait_for_camera(self.config.camera_timeout_s) is None
+            ):
                 raise RuntimeError("no real-robot camera payload received")
 
             self.started = True
@@ -197,7 +200,11 @@ class RealRuntimeClient:
 
     def resume(self) -> RuntimeHealth:
         health = self.start()
-        if health.get("ok", False) and self.config.motion_enabled and not self.config.auto_start_control:
+        if (
+            health.get("ok", False)
+            and self.config.motion_enabled
+            and not self.config.auto_start_control
+        ):
             try:
                 self.send_start_control()
                 self.started = True
@@ -223,9 +230,7 @@ class RealRuntimeClient:
         period_s = max(self.config.startup_command_period_s, 0.01)
         while True:
             if self.config.startup_reference_hold:
-                publisher.send_command(
-                    start=True, stop=False, planner=False, hold=True
-                )
+                publisher.send_command(start=True, stop=False, planner=False, hold=True)
             else:
                 publisher.send_command(start=True, stop=False, planner=True)
             remaining_s = deadline - time.monotonic()
@@ -272,10 +277,8 @@ class RealRuntimeClient:
                 }
             )
         publisher.send_reference_motion(frames)
-        transmitted_frame_count = (
-            len(frames["joint_pos"]) + STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES
-        )
-        return {
+        transmitted_frame_count = len(frames["joint_pos"]) + STREAMED_REFERENCE_TERMINAL_HOLD_FRAMES
+        telemetry = {
             "motion": "sonic_reference_motion",
             "sonic_input": "reference_motion",
             "chair_distance_m": float(payload["chair_distance_m"]),
@@ -287,6 +290,14 @@ class RealRuntimeClient:
             "transmitted_frame_count": transmitted_frame_count,
             "terminal_hold_frame_count": transmitted_frame_count - len(frames["joint_pos"]),
         }
+        if payload.get("chair_yaw_deg") is not None:
+            telemetry["chair_yaw_deg"] = float(payload["chair_yaw_deg"])
+            telemetry["reference_yaw_deg"] = float(payload["reference_yaw_deg"])
+            telemetry["reference_isaac_strict"] = bool(payload["reference_isaac_strict"])
+            telemetry["reference_action_completed"] = bool(payload["reference_action_completed"])
+            telemetry["reference_clean"] = bool(payload["reference_clean"])
+            telemetry["allow_non_clean_reference"] = bool(payload["allow_non_clean_reference"])
+        return telemetry
 
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> JSONDict:
         publisher = self._require_publisher()
@@ -359,7 +370,9 @@ class RealRuntimeClient:
                 if abs(remaining_command) <= max_step:
                     commanded_yaw = target_yaw
                 else:
-                    commanded_yaw = wrap_pi(commanded_yaw + math.copysign(max_step, remaining_command))
+                    commanded_yaw = wrap_pi(
+                        commanded_yaw + math.copysign(max_step, remaining_command)
+                    )
 
                 state = self.latest_state()
                 yaw_rate = None
@@ -373,7 +386,10 @@ class RealRuntimeClient:
                             settle_since = now
                     else:
                         settle_since = None
-                    if settle_since is not None and now - settle_since >= self.config.rotate_settle_time_s:
+                    if (
+                        settle_since is not None
+                        and now - settle_since >= self.config.rotate_settle_time_s
+                    ):
                         completed = True
                         break
 
@@ -451,7 +467,11 @@ class RealRuntimeClient:
             "base_velocity": {
                 "linear_mps": None,
                 "angular_rad_s": [None, None, state.yaw_rate],
-                "angular_deg_s": [None, None, math.degrees(state.yaw_rate)] if state.yaw_rate is not None else None,
+                "angular_deg_s": (
+                    [None, None, math.degrees(state.yaw_rate)]
+                    if state.yaw_rate is not None
+                    else None
+                ),
             },
             "joint_positions": (
                 dict(zip(G1_JOINT_ORDER, state.body_q, strict=True))
@@ -474,9 +494,7 @@ class RealRuntimeClient:
                 else {}
             ),
             "joint_order": list(G1_JOINT_ORDER),
-            "estimated": (
-                bool(localization["estimated"]) if localization is not None else True
-            ),
+            "estimated": (bool(localization["estimated"]) if localization is not None else True),
             "source": (
                 f"{localization['source']}+g1_debug"
                 if localization is not None
@@ -528,7 +546,8 @@ class RealRuntimeClient:
             "ok": self._startup_error is None,
             "runtime_mode": self.config.runtime_mode,
             "executor_started": self.started,
-            "sensor_connected": state_connected and (camera_connected or not self.config.camera_required),
+            "sensor_connected": state_connected
+            and (camera_connected or not self.config.camera_required),
             "error_message": self._startup_error,
             "telemetry": {
                 "executor": "real_zmq",
@@ -595,11 +614,11 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
         if self.runtime is None:
             self.runtime = RealRuntimeClient(self.config)
         if self.config.chair_motion_catalog:
-            self.chair_motion_catalog = ChairMotionCatalog(
-                self.config.chair_motion_catalog
-            )
+            self.chair_motion_catalog = ChairMotionCatalog(self.config.chair_motion_catalog)
         if self.config.use_move_model:
-            self._move_model, self._move_model_error = self._load_move_model(self.config.move_model_file)
+            self._move_model, self._move_model_error = self._load_move_model(
+                self.config.move_model_file
+            )
 
     def start(self) -> RuntimeHealth:
         assert self.runtime is not None
@@ -636,9 +655,7 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
         self.runtime.close()
         self.started = False
 
-    def play_sonic_reference_motion(
-        self, payload: Mapping[str, Any]
-    ) -> ExecuteActionResponse:
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
         with self._motion_lock:
             if not self.config.motion_enabled:
                 return self._real_failure(
@@ -665,15 +682,27 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
                         "halt_health": halt_health,
                     },
                 )
+        executed_arguments = {
+            "primitive": "sonic_reference_motion",
+            "chair_distance_m": float(payload["chair_distance_m"]),
+            "reference_distance_m": float(payload["reference_distance_m"]),
+            "motion_name": str(payload.get("motion_name", "")),
+            "tag": str(payload.get("tag", "")),
+            "duration_s": float(payload.get("duration_s", 0.0)),
+        }
+        if payload.get("chair_yaw_deg") is not None:
+            executed_arguments["chair_yaw_deg"] = float(payload["chair_yaw_deg"])
+            executed_arguments["reference_yaw_deg"] = float(payload["reference_yaw_deg"])
+            executed_arguments["reference_isaac_strict"] = bool(payload["reference_isaac_strict"])
+            executed_arguments["reference_action_completed"] = bool(
+                payload["reference_action_completed"]
+            )
+            executed_arguments["reference_clean"] = bool(payload["reference_clean"])
+            executed_arguments["allow_non_clean_reference"] = bool(
+                payload["allow_non_clean_reference"]
+            )
         return self._real_success(
-            executed_arguments={
-                "primitive": "sonic_reference_motion",
-                "chair_distance_m": float(payload["chair_distance_m"]),
-                "reference_distance_m": float(payload["reference_distance_m"]),
-                "motion_name": str(payload.get("motion_name", "")),
-                "tag": str(payload.get("tag", "")),
-                "duration_s": float(payload.get("duration_s", 0.0)),
-            },
+            executed_arguments=executed_arguments,
             telemetry=telemetry,
         )
 
@@ -709,12 +738,16 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
                     )
                 health = self.start()
                 if not health.get("ok", False):
-                    return self._real_failure(str(health.get("error_message")), dict(health.get("telemetry", {})))
+                    return self._real_failure(
+                        str(health.get("error_message")), dict(health.get("telemetry", {}))
+                    )
                 assert self.runtime is not None
                 telemetry = self._run_move_commands(commands)
             except Exception as exc:  # noqa: BLE001 - fail closed for hardware mode.
                 halt_health = self.halt()
-                return self._real_failure(str(exc), {"motion": "move", "halt_called": True, "halt_health": halt_health})
+                return self._real_failure(
+                    str(exc), {"motion": "move", "halt_called": True, "halt_health": halt_health}
+                )
 
             return self._real_success(
                 executed_arguments={
@@ -722,7 +755,9 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
                     "distance_m": distance,
                     "max_speed_mps": max_speed,
                     "timeout_s": timeout,
-                    "move_model_file": str(self._move_model.path) if self._move_model is not None else None,
+                    "move_model_file": (
+                        str(self._move_model.path) if self._move_model is not None else None
+                    ),
                 },
                 telemetry=telemetry,
             )
@@ -751,12 +786,16 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
                     )
                 health = self.start()
                 if not health.get("ok", False):
-                    return self._real_failure(str(health.get("error_message")), dict(health.get("telemetry", {})))
+                    return self._real_failure(
+                        str(health.get("error_message")), dict(health.get("telemetry", {}))
+                    )
                 assert self.runtime is not None
                 telemetry = self.runtime.rotate(angle, rate, timeout)
             except Exception as exc:  # noqa: BLE001 - fail closed for hardware mode.
                 halt_health = self.halt()
-                return self._real_failure(str(exc), {"motion": "rotate", "halt_called": True, "halt_health": halt_health})
+                return self._real_failure(
+                    str(exc), {"motion": "rotate", "halt_called": True, "halt_health": halt_health}
+                )
 
             if telemetry.get("completed") is not True:
                 return self._real_failure(
@@ -782,14 +821,18 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
             {
                 "move_model_enabled": self.config.use_move_model,
                 "move_model_loaded": self._move_model is not None,
-                "move_model_path": str(self._move_model.path) if self._move_model is not None else None,
+                "move_model_path": (
+                    str(self._move_model.path) if self._move_model is not None else None
+                ),
                 "move_model_error": self._move_model_error,
             }
         )
         health["telemetry"] = telemetry
         return health
 
-    def _real_success(self, executed_arguments: JSONDict, telemetry: JSONDict) -> ExecuteActionResponse:
+    def _real_success(
+        self, executed_arguments: JSONDict, telemetry: JSONDict
+    ) -> ExecuteActionResponse:
         command_id = self._next_command_id()
         response_telemetry: JSONDict = {
             "command_id": command_id,
@@ -823,7 +866,9 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
             "dry_run": False,
             "hardware": True,
             "executor_started": self.started,
-            "completion": self._completion_or_default(action_telemetry, action_status=action_status),
+            "completion": self._completion_or_default(
+                action_telemetry, action_status=action_status
+            ),
         }
         response_telemetry.update(action_telemetry)
         self._last_telemetry = response_telemetry
@@ -863,15 +908,21 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
         }
 
     def _clamped_speed(self, value: float | None) -> float:
-        speed = self._positive_float_or_default(value, self.config.default_move_speed_mps, "speed_mps")
+        speed = self._positive_float_or_default(
+            value, self.config.default_move_speed_mps, "speed_mps"
+        )
         return min(max(speed, self.config.min_move_speed_mps), self.config.max_move_speed_mps)
 
     def _clamped_max_speed(self, value: float | None) -> float:
-        speed = self._positive_float_or_default(value, self.config.max_move_speed_mps, "max_speed_mps")
+        speed = self._positive_float_or_default(
+            value, self.config.max_move_speed_mps, "max_speed_mps"
+        )
         return min(max(speed, self.config.min_move_speed_mps), self.config.max_move_speed_mps)
 
     def _clamped_rotate_rate(self, value: float | None) -> float:
-        rate = self._positive_float_or_default(value, self.config.default_rotate_rate_deg_s, "rate_deg_s")
+        rate = self._positive_float_or_default(
+            value, self.config.default_rotate_rate_deg_s, "rate_deg_s"
+        )
         return min(max(rate, self.config.min_rotate_rate_deg_s), self.config.max_rotate_rate_deg_s)
 
     def _move_commands(self, distance_m: float, max_speed_mps: float) -> list[JSONDict]:
@@ -1019,7 +1070,9 @@ class RealPrimitiveExecutor(DryRunPrimitiveExecutor):
 
     def _resolve_move_model_path(self, model_file: str) -> Path | None:
         if model_file.strip().lower() == "auto":
-            candidates = sorted((REPO_ROOT / "outputs" / "vigil_move_models").glob("vigil_move_model_*.json"))
+            candidates = sorted(
+                (REPO_ROOT / "outputs" / "vigil_move_models").glob("vigil_move_model_*.json")
+            )
             return candidates[-1] if candidates else None
         return resolve_repo_path(model_file)
 

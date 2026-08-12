@@ -18,8 +18,35 @@ from gear_sonic.vigil_bridge.rollout_recorder import G1_JOINT_ORDER
 # C++ policy_parameters.hpp: for each MuJoCo-order output joint, select the
 # corresponding IsaacLab-order reference joint.
 ISAACLAB_TO_MUJOCO: tuple[int, ...] = (
-    0, 3, 6, 9, 13, 17, 1, 4, 7, 10, 14, 18, 2, 5, 8,
-    11, 15, 19, 22, 25, 27, 28, 12, 16, 20, 23, 26, 21, 24,
+    0,
+    3,
+    6,
+    9,
+    13,
+    17,
+    1,
+    4,
+    7,
+    10,
+    14,
+    18,
+    2,
+    5,
+    8,
+    11,
+    15,
+    19,
+    22,
+    25,
+    27,
+    28,
+    12,
+    16,
+    20,
+    23,
+    26,
+    21,
+    24,
 )
 
 
@@ -36,7 +63,14 @@ def diagnose_preflight(
     if "chair_distance_m" not in request:
         raise ValueError("chair_distance_m is required")
 
-    motion = catalog.load(request["chair_distance_m"])
+    allow_non_clean = request.get("allow_non_clean_reference", False)
+    if not isinstance(allow_non_clean, bool):
+        raise ValueError("allow_non_clean_reference must be boolean")
+    motion = catalog.load(
+        request["chair_distance_m"],
+        request.get("chair_yaw_deg"),
+        allow_non_clean=allow_non_clean,
+    )
     robot_state = _mapping(state_response.get("robot_state"))
     joint_positions = _mapping(robot_state.get("joint_positions"))
     joint_velocities = _mapping(robot_state.get("joint_velocities"))
@@ -53,7 +87,9 @@ def diagnose_preflight(
 
     rms_limit = _positive_float(request.get("initial_rms_limit_rad", 0.20), "initial_rms_limit_rad")
     max_limit = _positive_float(request.get("initial_max_limit_rad", 0.50), "initial_max_limit_rad")
-    dq_limit = _positive_float(request.get("stationary_dq_limit_rad_s", 0.50), "stationary_dq_limit_rad_s")
+    dq_limit = _positive_float(
+        request.get("stationary_dq_limit_rad_s", 0.50), "stationary_dq_limit_rad_s"
+    )
     telemetry = _mapping(state_response.get("telemetry"))
     runtime_ready = bool(
         state_response.get("ok", False)
@@ -89,6 +125,12 @@ def diagnose_preflight(
         "selected_reference": {
             "requested_distance_m": motion.requested_distance_m,
             "reference_distance_m": motion.reference_distance_m,
+            "requested_yaw_deg": motion.requested_yaw_deg,
+            "reference_yaw_deg": motion.reference_yaw_deg,
+            "reference_isaac_strict": motion.reference_isaac_strict,
+            "reference_action_completed": motion.reference_action_completed,
+            "reference_clean": motion.reference_clean,
+            "allow_non_clean_reference": allow_non_clean,
             "tag": motion.tag,
             "motion_name": motion.motion_name,
             "source_frame_count": int(reference_source.shape[0]),
@@ -123,9 +165,7 @@ def diagnose_preflight(
         },
         "model_contract": {
             "expected_checkpoint": "policy/facee_v73_noheight/model",
-            "expected_observation_config": (
-                "policy/facee_v73_noheight/observation_config.yaml"
-            ),
+            "expected_observation_config": ("policy/facee_v73_noheight/observation_config.yaml"),
             "runtime_verification": "inspect launcher policy.log; paths are not present in g1_debug",
         },
     }
@@ -243,7 +283,11 @@ def analyze_rollout(session_dir: Path) -> dict[str, Any]:
                 "interpretation": "reference start/pose transition is a leading suspect",
             }
         )
-    if late_rms is not None and early_rms is not None and late_rms > max(early_rms * 1.35, early_rms + 0.10):
+    if (
+        late_rms is not None
+        and early_rms is not None
+        and late_rms > max(early_rms * 1.35, early_rms + 0.10)
+    ):
         findings.append(
             {
                 "code": "tracking_divergence",
@@ -310,8 +354,7 @@ def analyze_rollout(session_dir: Path) -> dict[str, Any]:
         "windows": windows,
         "anomaly_timeline": {
             "method": (
-                "first 5 consecutive 50 Hz samples above a robust pre-action "
-                "baseline threshold"
+                "first 5 consecutive 50 Hz samples above a robust pre-action " "baseline threshold"
             ),
             "required_consecutive_samples": 5,
             "thresholds": {
@@ -506,11 +549,7 @@ def _nearest_camera_observations(
     for camera_name, (distance, frame) in nearest.items():
         relative_path = str(frame.get("path", "")).strip()
         result[camera_name] = {
-            "path": (
-                str((session_dir / relative_path).resolve())
-                if relative_path
-                else None
-            ),
+            "path": (str((session_dir / relative_path).resolve()) if relative_path else None),
             "frame_index": frame.get("frame_index"),
             "pose_source_index": int(frame["pose_source_index"]),
             "source_index_delta": distance,

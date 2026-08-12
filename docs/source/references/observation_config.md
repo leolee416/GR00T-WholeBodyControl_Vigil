@@ -108,7 +108,7 @@ These observations relate to the encoder (tokenizer) system. See [With Encoder](
 |---|---|---|
 | `token_state` | config | Encoder output tokens (dimension set by `encoder.dimension` in YAML). Populated by local encoder inference or externally via ZMQ/ROS2. |
 | `encoder_mode` | 3 | Current encoder mode ID + 2 zero-padding values. |
-| `encoder_mode_4` | 4 | Current encoder mode ID + 3 zero-padding values. |
+| `encoder_mode_4` | 4 | Scalar encoder mode ID + 3-value `g1/teleop/smpl` one-hot. G1 mode is `[0, 1, 0, 0]`. |
 
 ---
 

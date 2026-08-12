@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "onnx_file": "model_step_000096_decoder.onnx",
+  "provider": "CPUExecutionProvider",
+  "input_name": "obs_dict",
+  "input_shape": [1, 994],
+  "output_name": "action",
+  "output_shape": [1, 29],
+  "max_abs_error": 0.000001430511474609375,
+  "mean_abs_error": 0.00000044318107939034235,
+  "rtol": 0.0001,
+  "atol": 0.00001,
+  "allclose": true
+}

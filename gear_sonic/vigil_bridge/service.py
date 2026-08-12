@@ -432,6 +432,12 @@ class VigilBridgeService:
             "motion_name",
             "reference_distance_m",
             "chair_distance_m",
+            "reference_yaw_deg",
+            "chair_yaw_deg",
+            "reference_isaac_strict",
+            "reference_action_completed",
+            "reference_clean",
+            "allow_non_clean_reference",
             "tag",
         ):
             if key in payload:
@@ -470,6 +476,12 @@ class VigilBridgeService:
                 "motion_name",
                 "reference_distance_m",
                 "chair_distance_m",
+                "reference_yaw_deg",
+                "chair_yaw_deg",
+                "reference_isaac_strict",
+                "reference_action_completed",
+                "reference_clean",
+                "allow_non_clean_reference",
                 "tag",
             ):
                 if executed_arguments is not None and key in executed_arguments:

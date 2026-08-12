@@ -132,9 +132,7 @@ class RolloutRecorder:
             capture_mode = str(request.get("capture_mode", "skill_window")).strip().lower()
             if capture_mode not in {"skill_window", "continuous"}:
                 raise ValueError("capture_mode must be 'skill_window' or 'continuous'")
-            capture_skill = str(
-                request.get("capture_skill", "sonic.sit_chair")
-            ).strip().lower()
+            capture_skill = str(request.get("capture_skill", "sonic.sit_chair")).strip().lower()
             if capture_mode == "skill_window" and not capture_skill:
                 raise ValueError("capture_skill is required for skill_window mode")
             pre_roll_s = self._bounded_float(
@@ -163,7 +161,9 @@ class RolloutRecorder:
             )
             now_wall = time.time()
             session_name = self._sanitize_name(str(request.get("session_name", "rollout")))
-            timestamp = datetime.fromtimestamp(now_wall, tz=timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+            timestamp = datetime.fromtimestamp(now_wall, tz=timezone.utc).strftime(
+                "%Y%m%dT%H%M%S_%fZ"
+            )
             session_id = f"{timestamp}_{session_name}"
             chair_world_pose = (
                 self._normalize_chair_pose(
@@ -200,9 +200,7 @@ class RolloutRecorder:
             self._capture_deadline_monotonic_s = None
             self._capture_complete = False
             self._auto_started = bool(request.get("auto_started", False))
-            self._auto_export = bool(
-                request.get("auto_export", capture_mode == "skill_window")
-            )
+            self._auto_export = bool(request.get("auto_export", capture_mode == "skill_window"))
             self._auto_export_options = {
                 "target_fps": target_fps,
                 "smoothing_window": smoothing_window,
@@ -330,7 +328,9 @@ class RolloutRecorder:
         received_wall_s: float | None = None,
         localization: Mapping[str, Any] | None = None,
     ) -> bool:
-        now_monotonic = time.monotonic() if received_monotonic_s is None else float(received_monotonic_s)
+        now_monotonic = (
+            time.monotonic() if received_monotonic_s is None else float(received_monotonic_s)
+        )
         now_wall = time.time() if received_wall_s is None else float(received_wall_s)
 
         with self._lock:
@@ -407,6 +407,14 @@ class RolloutRecorder:
                     self._motion_context.get("chair_distance_m"),
                     math.nan,
                 ),
+                "reference_yaw_deg": self._safe_float(
+                    self._motion_context.get("reference_yaw_deg"),
+                    math.nan,
+                ),
+                "chair_yaw_deg": self._safe_float(
+                    self._motion_context.get("chair_yaw_deg"),
+                    math.nan,
+                ),
             }
             self._append_rolling_sample_locked(sample, now_monotonic)
             if not self._active:
@@ -447,7 +455,9 @@ class RolloutRecorder:
             return 0
         timestamps = payload.get("timestamps")
         timestamps = timestamps if isinstance(timestamps, Mapping) else {}
-        now_monotonic = time.monotonic() if received_monotonic_s is None else float(received_monotonic_s)
+        now_monotonic = (
+            time.monotonic() if received_monotonic_s is None else float(received_monotonic_s)
+        )
         now_wall = time.time() if received_wall_s is None else float(received_wall_s)
 
         with self._lock:
@@ -503,6 +513,8 @@ class RolloutRecorder:
             "skill_name",
             "reference_distance_m",
             "chair_distance_m",
+            "reference_yaw_deg",
+            "chair_yaw_deg",
             "episode_id",
             "step_id",
             "tag",
@@ -529,9 +541,7 @@ class RolloutRecorder:
         """Start a bounded action window, auto-arming sit capture when needed."""
         skill_name = str(payload.get("skill_name", "")).strip().lower()
         now_monotonic = (
-            time.monotonic()
-            if timestamp_monotonic_s is None
-            else float(timestamp_monotonic_s)
+            time.monotonic() if timestamp_monotonic_s is None else float(timestamp_monotonic_s)
         )
         with self._lock:
             target_skill = self._capture_skill if self._active else "sonic.sit_chair"
@@ -583,6 +593,8 @@ class RolloutRecorder:
                 "motion_name",
                 "reference_distance_m",
                 "chair_distance_m",
+                "reference_yaw_deg",
+                "chair_yaw_deg",
                 "tag",
             ):
                 if key in payload:
@@ -599,9 +611,7 @@ class RolloutRecorder:
         """Mark action completion and schedule export after at most 3 s post-roll."""
         skill_name = str(payload.get("skill_name", "")).strip().lower()
         now_monotonic = (
-            time.monotonic()
-            if timestamp_monotonic_s is None
-            else float(timestamp_monotonic_s)
+            time.monotonic() if timestamp_monotonic_s is None else float(timestamp_monotonic_s)
         )
         with self._lock:
             if (
@@ -621,9 +631,7 @@ class RolloutRecorder:
                     "error_message": None,
                     "session_id": self._session_id,
                     "session_dir": (
-                        str(self._session_dir)
-                        if self._session_dir is not None
-                        else None
+                        str(self._session_dir) if self._session_dir is not None else None
                     ),
                     "sample_count": 0,
                     "export_status": "skipped_no_motion_commanded",
@@ -640,9 +648,7 @@ class RolloutRecorder:
                 now_monotonic,
                 self._capture_started_monotonic_s,
             )
-            expected_duration_s = self._optional_finite_float(
-                payload.get("duration_s")
-            )
+            expected_duration_s = self._optional_finite_float(payload.get("duration_s"))
             if expected_duration_s is not None and expected_duration_s > 0.0:
                 action_finished_monotonic_s = now_monotonic + expected_duration_s
                 action_duration_source = "executed_arguments.duration_s_after_dispatch"
@@ -650,24 +656,16 @@ class RolloutRecorder:
                 action_finished_monotonic_s = now_monotonic
                 action_duration_source = "execute_action_return"
             self._capture_finished_monotonic_s = action_finished_monotonic_s
-            self._capture_deadline_monotonic_s = (
-                action_finished_monotonic_s + self._post_roll_s
-            )
-            self._capture_complete = (
-                self._capture_deadline_monotonic_s <= time.monotonic()
-            )
+            self._capture_deadline_monotonic_s = action_finished_monotonic_s + self._post_roll_s
+            self._capture_complete = self._capture_deadline_monotonic_s <= time.monotonic()
             self._metadata.update(
                 {
                     "capture_action_dispatch_return_monotonic_s": now_monotonic,
-                    "capture_action_finished_monotonic_s": (
-                        action_finished_monotonic_s
-                    ),
+                    "capture_action_finished_monotonic_s": (action_finished_monotonic_s),
                     "capture_action_duration_source": action_duration_source,
                     "capture_expected_duration_s": expected_duration_s,
                     "capture_deadline_monotonic_s": self._capture_deadline_monotonic_s,
-                    "capture_action_status": str(
-                        payload.get("action_status", "completed")
-                    ),
+                    "capture_action_status": str(payload.get("action_status", "completed")),
                     "capture_motion_commanded": payload.get("motion_commanded"),
                     "capture_final_motion_context": dict(self._motion_context),
                 }
@@ -698,9 +696,7 @@ class RolloutRecorder:
         """Rebase the window to the actual reference-dispatch time."""
         skill_name = str(payload.get("skill_name", "")).strip().lower()
         now_monotonic = (
-            time.monotonic()
-            if timestamp_monotonic_s is None
-            else float(timestamp_monotonic_s)
+            time.monotonic() if timestamp_monotonic_s is None else float(timestamp_monotonic_s)
         )
         with self._lock:
             if (
@@ -729,6 +725,8 @@ class RolloutRecorder:
                 "motion_name",
                 "reference_distance_m",
                 "chair_distance_m",
+                "reference_yaw_deg",
+                "chair_yaw_deg",
                 "tag",
             ):
                 if key in payload:
@@ -783,8 +781,7 @@ class RolloutRecorder:
                             self._capture_deadline_monotonic_s
                             - max(
                                 now_monotonic,
-                                self._capture_finished_monotonic_s
-                                or now_monotonic,
+                                self._capture_finished_monotonic_s or now_monotonic,
                             ),
                         )
                         if self._capture_deadline_monotonic_s is not None
@@ -892,16 +889,24 @@ class RolloutRecorder:
         smoothing_window: int,
         dropped_samples: int,
     ) -> dict[str, Any]:
-        monotonic_s = np.asarray([sample["timestamp_monotonic_s"] for sample in samples], dtype=np.float64)
+        monotonic_s = np.asarray(
+            [sample["timestamp_monotonic_s"] for sample in samples], dtype=np.float64
+        )
         relative_s = monotonic_s - monotonic_s[0]
         body_q = np.asarray([sample["body_q"] for sample in samples], dtype=np.float32)
         body_dq = np.asarray([sample["body_dq"] for sample in samples], dtype=np.float32)
         base_quat = np.asarray([sample["base_quat"] for sample in samples], dtype=np.float32)
         base_ang_vel = np.asarray([sample["base_ang_vel"] for sample in samples], dtype=np.float32)
         base_xyz = np.asarray([sample["base_xyz"] for sample in samples], dtype=np.float32)
-        base_xyz_valid = np.asarray([sample["base_xyz_valid"] for sample in samples], dtype=np.bool_)
-        body_q_target = np.asarray([sample["body_q_target"] for sample in samples], dtype=np.float32)
-        policy_action = np.asarray([sample["policy_action"] for sample in samples], dtype=np.float32)
+        base_xyz_valid = np.asarray(
+            [sample["base_xyz_valid"] for sample in samples], dtype=np.bool_
+        )
+        body_q_target = np.asarray(
+            [sample["body_q_target"] for sample in samples], dtype=np.float32
+        )
+        policy_action = np.asarray(
+            [sample["policy_action"] for sample in samples], dtype=np.float32
+        )
         action_started_s = self._optional_finite_float(
             metadata.get("capture_action_started_monotonic_s")
         )
@@ -957,18 +962,26 @@ class RolloutRecorder:
             schema_version=np.asarray(ROLLOUT_SCHEMA_VERSION),
             metadata_json=np.asarray(metadata_json),
             timestamp_monotonic_s=monotonic_s,
-            timestamp_wall_s=np.asarray([sample["timestamp_wall_s"] for sample in samples], dtype=np.float64),
+            timestamp_wall_s=np.asarray(
+                [sample["timestamp_wall_s"] for sample in samples], dtype=np.float64
+            ),
             timestamp_relative_s=relative_s,
             source_index=np.asarray([sample["source_index"] for sample in samples], dtype=np.int64),
-            ros_timestamp_s=np.asarray([sample["ros_timestamp_s"] for sample in samples], dtype=np.float64),
+            ros_timestamp_s=np.asarray(
+                [sample["ros_timestamp_s"] for sample in samples], dtype=np.float64
+            ),
             body_q=body_q,
             body_dq=body_dq,
             base_quat_wxyz=base_quat,
             base_ang_vel=base_ang_vel,
             base_xyz_world=base_xyz,
             base_xyz_valid=base_xyz_valid,
-            base_xyz_source=np.asarray([sample["base_xyz_source"] for sample in samples], dtype=np.str_),
-            base_xyz_frame_id=np.asarray([sample["base_xyz_frame_id"] for sample in samples], dtype=np.str_),
+            base_xyz_source=np.asarray(
+                [sample["base_xyz_source"] for sample in samples], dtype=np.str_
+            ),
+            base_xyz_frame_id=np.asarray(
+                [sample["base_xyz_frame_id"] for sample in samples], dtype=np.str_
+            ),
             base_xyz_estimated=np.asarray(
                 [sample["base_xyz_estimated"] for sample in samples],
                 dtype=np.bool_,
@@ -990,20 +1003,24 @@ class RolloutRecorder:
                 [sample["chair_distance_m"] for sample in samples],
                 dtype=np.float32,
             ),
+            reference_yaw_deg=np.asarray(
+                [sample["reference_yaw_deg"] for sample in samples],
+                dtype=np.float32,
+            ),
+            chair_yaw_deg=np.asarray(
+                [sample["chair_yaw_deg"] for sample in samples],
+                dtype=np.float32,
+            ),
             joint_order=np.asarray(G1_JOINT_ORDER, dtype=np.str_),
             **chair_arrays,
         )
 
         valid_frame_ids = {
-            str(sample["base_xyz_frame_id"])
-            for sample in samples
-            if sample["base_xyz_valid"]
+            str(sample["base_xyz_frame_id"]) for sample in samples if sample["base_xyz_valid"]
         }
         base_frame_id = next(iter(valid_frame_ids)) if len(valid_frame_ids) == 1 else ""
         spatial_replay_ready = bool(
-            base_xyz_valid.all()
-            and base_xyz_valid.size > 0
-            and len(valid_frame_ids) == 1
+            base_xyz_valid.all() and base_xyz_valid.size > 0 and len(valid_frame_ids) == 1
         )
         chair_relative_replay_ready = bool(
             spatial_replay_ready
@@ -1018,7 +1035,9 @@ class RolloutRecorder:
             timestamp_s=relative_s,
             root_pos_world=base_xyz,
             root_pos_valid=base_xyz_valid,
-            root_pos_source=np.asarray([sample["base_xyz_source"] for sample in samples], dtype=np.str_),
+            root_pos_source=np.asarray(
+                [sample["base_xyz_source"] for sample in samples], dtype=np.str_
+            ),
             root_pos_frame_id=np.asarray(
                 [sample["base_xyz_frame_id"] for sample in samples],
                 dtype=np.str_,
@@ -1077,7 +1096,9 @@ class RolloutRecorder:
         self._atomic_savez(
             reference_path,
             schema_version=np.asarray("gear_sonic_reference_candidate_v1"),
-            metadata_json=np.asarray(json.dumps(reference_metadata, ensure_ascii=False, sort_keys=True)),
+            metadata_json=np.asarray(
+                json.dumps(reference_metadata, ensure_ascii=False, sort_keys=True)
+            ),
             joint_pos=reference_q.astype(np.float32),
             joint_vel=reference_dq.astype(np.float32),
             body_quat_w=reference_quat.astype(np.float32),
@@ -1098,13 +1119,8 @@ class RolloutRecorder:
             valid_frame_ids,
             chair_world_pose,
         )
-        if not any(
-            metadata.get(key)
-            for key in ("checkpoint", "checkpoint_id", "checkpoint_hash")
-        ):
-            export_warnings.append(
-                "checkpoint metadata was not supplied to /rollout/start"
-            )
+        if not any(metadata.get(key) for key in ("checkpoint", "checkpoint_id", "checkpoint_hash")):
+            export_warnings.append("checkpoint metadata was not supplied to /rollout/start")
         camera_index_path = session_dir / "camera_index.json"
         self._atomic_write_json(
             camera_index_path,
@@ -1248,7 +1264,9 @@ class RolloutRecorder:
                 }
             )
             return pose
-        position = self._required_vector(value.get("position_xyz"), 3, "chair_world_pose.position_xyz")
+        position = self._required_vector(
+            value.get("position_xyz"), 3, "chair_world_pose.position_xyz"
+        )
         orientation = self._normalize_quaternion(
             self._required_vector(
                 value.get("orientation_wxyz"),
@@ -1284,8 +1302,7 @@ class RolloutRecorder:
         result = dict(pose)
         for key in ("position_xyz", "orientation_wxyz"):
             result[key] = [
-                float(value) if math.isfinite(float(value)) else None
-                for value in pose.get(key, [])
+                float(value) if math.isfinite(float(value)) else None for value in pose.get(key, [])
             ]
         return result
 
@@ -1298,7 +1315,9 @@ class RolloutRecorder:
         return np.linspace(0.0, duration, count, dtype=np.float64)
 
     @staticmethod
-    def _unique_time_rows(source_s: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _unique_time_rows(
+        source_s: np.ndarray, values: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
         if len(source_s) <= 1:
             return source_s, values
         keep = np.concatenate(([True], np.diff(source_s) > 1e-9))
@@ -1315,8 +1334,7 @@ class RolloutRecorder:
         if len(source_s) == 1:
             return np.repeat(values[:1], len(target_s), axis=0)
         columns = [
-            np.interp(target_s, source_s, values[:, column])
-            for column in range(values.shape[1])
+            np.interp(target_s, source_s, values[:, column]) for column in range(values.shape[1])
         ]
         return np.stack(columns, axis=1)
 
@@ -1377,7 +1395,10 @@ class RolloutRecorder:
         padded = np.pad(values, ((pad, pad), (0, 0)), mode="edge")
         kernel = np.ones(effective, dtype=np.float64) / effective
         return np.stack(
-            [np.convolve(padded[:, column], kernel, mode="valid") for column in range(values.shape[1])],
+            [
+                np.convolve(padded[:, column], kernel, mode="valid")
+                for column in range(values.shape[1])
+            ],
             axis=1,
         )
 
@@ -1455,7 +1476,10 @@ class RolloutRecorder:
             )
         if not bool(chair_world_pose.get("valid", False)):
             warnings.append("chair_world_pose is missing; chair-relative scene replay is not ready")
-        elif len(base_frame_ids) == 1 and str(chair_world_pose.get("frame_id", "")) not in base_frame_ids:
+        elif (
+            len(base_frame_ids) == 1
+            and str(chair_world_pose.get("frame_id", "")) not in base_frame_ids
+        ):
             warnings.append(
                 "chair_world_pose.frame_id does not match base_xyz frame_id; "
                 "chair-relative replay is not ready"

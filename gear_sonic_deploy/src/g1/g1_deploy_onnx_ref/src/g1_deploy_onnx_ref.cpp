@@ -1695,9 +1695,15 @@ class G1Deploy {
     }
 
     bool GatherEncoderMode(std::vector<double>& target_buffer, size_t offset, int fill_zeros_num = 0) {
-      target_buffer[offset] = static_cast<float>(current_motion_->GetEncodeMode());
+      const int mode = current_motion_->GetEncodeMode();
+      target_buffer[offset] = static_cast<float>(mode);
       for (int i = 1; i <= fill_zeros_num; ++i) {
         target_buffer[offset + i] = 0;
+      }
+      // Universal SONIC export layout is selector(1), then encoder_index(3).
+      // For G1 mode 0 this slot must be [0, 1, 0, 0], not all zeros.
+      if (fill_zeros_num == 3 && mode >= 0 && mode < 3) {
+        target_buffer[offset + 1 + static_cast<size_t>(mode)] = 1.0;
       }
       return true;
     }

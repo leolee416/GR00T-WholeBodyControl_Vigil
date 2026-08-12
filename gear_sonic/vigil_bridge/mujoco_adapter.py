@@ -279,9 +279,7 @@ class PackedPublisher:
         if scalar_value("protocol_version") != 1:
             raise ValueError("reference motion must declare protocol_version=1")
         if scalar_value("joint_order") != "isaaclab":
-            raise ValueError(
-                "ZMQ protocol v1 reference motion must declare joint_order=isaaclab"
-            )
+            raise ValueError("ZMQ protocol v1 reference motion must declare joint_order=isaaclab")
 
         joint_pos = np.asarray(frames.get("joint_pos"), dtype="<f4")
         joint_vel = np.asarray(frames.get("joint_vel"), dtype="<f4")
@@ -312,8 +310,7 @@ class PackedPublisher:
         frame_index = np.concatenate(
             (
                 frame_index,
-                frame_index[-1]
-                + np.arange(1, hold_count + 1, dtype=frame_index.dtype),
+                frame_index[-1] + np.arange(1, hold_count + 1, dtype=frame_index.dtype),
             ),
             axis=0,
         )
@@ -366,7 +363,9 @@ class StateSubscriber(threading.Thread):
             import msgpack
             import zmq
         except ImportError as exc:
-            raise RuntimeError("pyzmq and msgpack are required for MuJoCo bridge state transport") from exc
+            raise RuntimeError(
+                "pyzmq and msgpack are required for MuJoCo bridge state transport"
+            ) from exc
 
         self._msgpack = msgpack
         self._zmq = zmq
@@ -564,7 +563,9 @@ class ZMQImageSubscriber:
             import msgpack
             import zmq
         except ImportError as exc:
-            raise RuntimeError("pyzmq and msgpack are required for MuJoCo bridge camera transport") from exc
+            raise RuntimeError(
+                "pyzmq and msgpack are required for MuJoCo bridge camera transport"
+            ) from exc
 
         self._msgpack = msgpack
         self._zmq = zmq
@@ -744,9 +745,7 @@ class MujocoRuntimeClient:
             # before start=true reaches WAIT_FOR_CONTROL.  Otherwise the first
             # actor tick can still observe the pre-loaded example motion.
             time.sleep(max(0.30, 3.0 * period_s))
-            deadline = time.monotonic() + max(
-                0.20, self.config.startup_command_burst_s
-            )
+            deadline = time.monotonic() + max(0.20, self.config.startup_command_burst_s)
             while True:
                 publisher.send_command(start=True, stop=False, planner=False)
                 remaining_s = deadline - time.monotonic()
@@ -767,7 +766,7 @@ class MujocoRuntimeClient:
             )
 
         duration_s = float(payload.get("duration_s", 0.0))
-        return {
+        telemetry = {
             "motion": "sonic_reference_motion",
             "sonic_input": "reference_motion",
             "chair_distance_m": float(payload["chair_distance_m"]),
@@ -785,6 +784,14 @@ class MujocoRuntimeClient:
                 "command_duration_s": duration_s,
             },
         }
+        if payload.get("chair_yaw_deg") is not None:
+            telemetry["chair_yaw_deg"] = float(payload["chair_yaw_deg"])
+            telemetry["reference_yaw_deg"] = float(payload["reference_yaw_deg"])
+            telemetry["reference_isaac_strict"] = bool(payload["reference_isaac_strict"])
+            telemetry["reference_action_completed"] = bool(payload["reference_action_completed"])
+            telemetry["reference_clean"] = bool(payload["reference_clean"])
+            telemetry["allow_non_clean_reference"] = bool(payload["allow_non_clean_reference"])
+        return telemetry
 
     def move(self, distance_m: float, speed_mps: float, duration_s: float) -> JSONDict:
         publisher = self._require_publisher()
@@ -868,7 +875,9 @@ class MujocoRuntimeClient:
                 if abs(remaining_command) <= max_step:
                     commanded_yaw = target_yaw
                 else:
-                    commanded_yaw = wrap_pi(commanded_yaw + math.copysign(max_step, remaining_command))
+                    commanded_yaw = wrap_pi(
+                        commanded_yaw + math.copysign(max_step, remaining_command)
+                    )
 
                 state = self.latest_state()
                 yaw_rate = None
@@ -886,7 +895,10 @@ class MujocoRuntimeClient:
                             settle_since = now
                     else:
                         settle_since = None
-                    if settle_since is not None and now - settle_since >= self.config.rotate_settle_time_s:
+                    if (
+                        settle_since is not None
+                        and now - settle_since >= self.config.rotate_settle_time_s
+                    ):
                         completed = True
                         break
 
@@ -970,7 +982,9 @@ class MujocoRuntimeClient:
                 "linear_mps": linear_velocity,
                 "angular_rad_s": angular_velocity,
                 "angular_deg_s": (
-                    [math.degrees(v) for v in angular_velocity] if angular_velocity is not None else None
+                    [math.degrees(v) for v in angular_velocity]
+                    if angular_velocity is not None
+                    else None
                 ),
             },
             "joint_positions": (
@@ -1130,11 +1144,11 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
         if self.runtime is None:
             self.runtime = MujocoRuntimeClient(self.config)
         if self.config.chair_motion_catalog:
-            self.chair_motion_catalog = ChairMotionCatalog(
-                self.config.chair_motion_catalog
-            )
+            self.chair_motion_catalog = ChairMotionCatalog(self.config.chair_motion_catalog)
         if self.config.use_move_model:
-            self._move_model, self._move_model_error = self._load_move_model(self.config.move_model_file)
+            self._move_model, self._move_model_error = self._load_move_model(
+                self.config.move_model_file
+            )
 
     def start(self) -> RuntimeHealth:
         assert self.runtime is not None
@@ -1166,9 +1180,7 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
         self.runtime.close()
         self.started = False
 
-    def play_sonic_reference_motion(
-        self, payload: Mapping[str, Any]
-    ) -> ExecuteActionResponse:
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
         """Send a FaceE reference to SONIC running against MuJoCo, never dry-run."""
 
         with self._motion_lock:
@@ -1192,16 +1204,28 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
                     },
                 )
 
+        executed_arguments = {
+            "primitive": "sonic_reference_motion",
+            "chair_distance_m": float(payload["chair_distance_m"]),
+            "reference_distance_m": float(payload["reference_distance_m"]),
+            "motion_name": str(payload.get("motion_name", "")),
+            "tag": str(payload.get("tag", "")),
+            "duration_s": float(payload.get("duration_s", 0.0)),
+            "frame_count": int(telemetry.get("frame_count", 0)),
+        }
+        if payload.get("chair_yaw_deg") is not None:
+            executed_arguments["chair_yaw_deg"] = float(payload["chair_yaw_deg"])
+            executed_arguments["reference_yaw_deg"] = float(payload["reference_yaw_deg"])
+            executed_arguments["reference_isaac_strict"] = bool(payload["reference_isaac_strict"])
+            executed_arguments["reference_action_completed"] = bool(
+                payload["reference_action_completed"]
+            )
+            executed_arguments["reference_clean"] = bool(payload["reference_clean"])
+            executed_arguments["allow_non_clean_reference"] = bool(
+                payload["allow_non_clean_reference"]
+            )
         return self._mujoco_success(
-            executed_arguments={
-                "primitive": "sonic_reference_motion",
-                "chair_distance_m": float(payload["chair_distance_m"]),
-                "reference_distance_m": float(payload["reference_distance_m"]),
-                "motion_name": str(payload.get("motion_name", "")),
-                "tag": str(payload.get("tag", "")),
-                "duration_s": float(payload.get("duration_s", 0.0)),
-                "frame_count": int(telemetry.get("frame_count", 0)),
-            },
+            executed_arguments=executed_arguments,
             telemetry=telemetry,
         )
 
@@ -1231,7 +1255,9 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
                     )
                 health = self.start()
                 if not health.get("ok", False):
-                    return self._mujoco_failure(str(health.get("error_message")), dict(health.get("telemetry", {})))
+                    return self._mujoco_failure(
+                        str(health.get("error_message")), dict(health.get("telemetry", {}))
+                    )
                 assert self.runtime is not None
                 telemetry = self._run_move_commands(commands)
             except Exception as exc:  # noqa: BLE001 - return structured error.
@@ -1243,7 +1269,9 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
                     "distance_m": distance,
                     "max_speed_mps": max_speed,
                     "timeout_s": timeout,
-                    "move_model_file": str(self._move_model.path) if self._move_model is not None else None,
+                    "move_model_file": (
+                        str(self._move_model.path) if self._move_model is not None else None
+                    ),
                 },
                 telemetry=telemetry,
             )
@@ -1266,7 +1294,9 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
                     )
                 health = self.start()
                 if not health.get("ok", False):
-                    return self._mujoco_failure(str(health.get("error_message")), dict(health.get("telemetry", {})))
+                    return self._mujoco_failure(
+                        str(health.get("error_message")), dict(health.get("telemetry", {}))
+                    )
                 assert self.runtime is not None
                 telemetry = self.runtime.rotate(angle, rate, timeout)
             except Exception as exc:  # noqa: BLE001 - return structured error.
@@ -1295,14 +1325,18 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
         telemetry.update(
             {
                 "move_model_loaded": self._move_model is not None,
-                "move_model_path": str(self._move_model.path) if self._move_model is not None else None,
+                "move_model_path": (
+                    str(self._move_model.path) if self._move_model is not None else None
+                ),
                 "move_model_error": self._move_model_error,
             }
         )
         health["telemetry"] = telemetry
         return health
 
-    def _mujoco_success(self, executed_arguments: JSONDict, telemetry: JSONDict) -> ExecuteActionResponse:
+    def _mujoco_success(
+        self, executed_arguments: JSONDict, telemetry: JSONDict
+    ) -> ExecuteActionResponse:
         command_id = self._next_command_id()
         response_completion = self._completion_or_default(telemetry, action_status="completed")
         response_telemetry: JSONDict = {
@@ -1330,7 +1364,9 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
         action_status: str = "failed",
     ) -> ExecuteActionResponse:
         action_telemetry = dict(telemetry or {})
-        response_completion = self._completion_or_default(action_telemetry, action_status=action_status)
+        response_completion = self._completion_or_default(
+            action_telemetry, action_status=action_status
+        )
         response_telemetry: JSONDict = {
             "runtime_mode": self.runtime_mode,
             "controller": "mujoco_zmq_wbc",
@@ -1377,15 +1413,21 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
         }
 
     def _clamped_speed(self, value: float | None) -> float:
-        speed = self._positive_float_or_default(value, self.config.default_move_speed_mps, "speed_mps")
+        speed = self._positive_float_or_default(
+            value, self.config.default_move_speed_mps, "speed_mps"
+        )
         return min(max(speed, self.config.min_move_speed_mps), self.config.max_move_speed_mps)
 
     def _clamped_max_speed(self, value: float | None) -> float:
-        speed = self._positive_float_or_default(value, self.config.max_move_speed_mps, "max_speed_mps")
+        speed = self._positive_float_or_default(
+            value, self.config.max_move_speed_mps, "max_speed_mps"
+        )
         return min(max(speed, self.config.min_move_speed_mps), self.config.max_move_speed_mps)
 
     def _clamped_rotate_rate(self, value: float | None) -> float:
-        rate = self._positive_float_or_default(value, self.config.default_rotate_rate_deg_s, "rate_deg_s")
+        rate = self._positive_float_or_default(
+            value, self.config.default_rotate_rate_deg_s, "rate_deg_s"
+        )
         return min(max(rate, self.config.min_rotate_rate_deg_s), self.config.max_rotate_rate_deg_s)
 
     def _move_commands(self, distance_m: float, max_speed_mps: float) -> list[JSONDict]:
@@ -1547,7 +1589,9 @@ class MujocoPrimitiveExecutor(DryRunPrimitiveExecutor):
 
     def _resolve_move_model_path(self, model_file: str) -> Path | None:
         if model_file.strip().lower() == "auto":
-            candidates = sorted((REPO_ROOT / "outputs" / "vigil_move_models").glob("vigil_move_model_*.json"))
+            candidates = sorted(
+                (REPO_ROOT / "outputs" / "vigil_move_models").glob("vigil_move_model_*.json")
+            )
             return candidates[-1] if candidates else None
         return resolve_repo_path(model_file)
 

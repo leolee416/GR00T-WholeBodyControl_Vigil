@@ -95,8 +95,9 @@ reference 槽位契约是 **IsaacLab 关节顺序**。从 NPZ 加载、Python �
 
 ### 2.3 已发现但从本实验中严格隔离的其他 parity 项
 
-当前 C++ `GatherEncoderMode(..., 3)` 对 `encode_mode=0` 产生 `[0, 0, 0, 0]`，
-而部分 Python direct runner 构造的是 `[0, 1, 0, 0]`；真机进入 motion 前的
+本报告实验时的 C++ `GatherEncoderMode(..., 3)` 对 `encode_mode=0` 产生
+`[0, 0, 0, 0]`，而 Python 官方 export contract 构造的是 `[0, 1, 0, 0]`。
+当前分支已把 C++ 修正为后一种 scalar selector + one-hot 布局；真机进入 motion 前的
 默认站姿与 reference 首帧也可能不同。这些都需要单独审计，但本文的两个 ONNX
 分支使用完全相同的 C++ prefix、root orientation 和 proprioception fixture，
 所以它们不会贡献本文报告的 order-only token/action 差值。

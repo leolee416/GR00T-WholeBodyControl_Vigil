@@ -102,10 +102,10 @@ def _build_encoder_input(
     """Build the selected G1 branch of the v1.1 1751-value encoder input."""
     sample_frames = np.arange(0, 50, 5, dtype=np.int64)
     encoded = np.zeros(1751, dtype=np.float32)
-    # Mirrors GatherEncoderMode(..., fill_zeros_num=3) in the current C++
-    # runtime for encode_mode=0: [0, 0, 0, 0].  This prefix is identical in
-    # both branches, so it cannot contribute to the order-only delta.
-    encoded[:4] = 0.0
+    # Mirrors the universal export contract and current C++ runtime:
+    # scalar selector(0) + G1/teleop/smpl one-hot([1, 0, 0]).  This prefix is
+    # identical in both branches, so it cannot contribute to order-only delta.
+    encoded[:4] = (0.0, 1.0, 0.0, 0.0)
     encoded[4:294] = joint_pos[sample_frames].reshape(-1)
     encoded[294:584] = joint_vel[sample_frames].reshape(-1)
 

@@ -134,11 +134,24 @@ class DryRunPrimitiveExecutor:
                     raise ValueError("chair motion catalog is not configured")
                 if "chair_distance_m" not in args:
                     raise ValueError("chair_distance_m is required")
-                motion = self.chair_motion_catalog.load(args["chair_distance_m"])
+                allow_non_clean = args.get("allow_non_clean_reference", False)
+                if not isinstance(allow_non_clean, bool):
+                    raise ValueError("allow_non_clean_reference must be boolean")
+                motion = self.chair_motion_catalog.load(
+                    args["chair_distance_m"],
+                    args.get("chair_yaw_deg"),
+                    allow_non_clean=allow_non_clean,
+                )
                 return self.play_sonic_reference_motion(
                     {
                         "chair_distance_m": motion.requested_distance_m,
                         "reference_distance_m": motion.reference_distance_m,
+                        "chair_yaw_deg": motion.requested_yaw_deg,
+                        "reference_yaw_deg": motion.reference_yaw_deg,
+                        "reference_isaac_strict": motion.reference_isaac_strict,
+                        "reference_action_completed": motion.reference_action_completed,
+                        "reference_clean": motion.reference_clean,
+                        "allow_non_clean_reference": allow_non_clean,
                         "motion_name": motion.motion_name,
                         "tag": motion.tag,
                         "duration_s": motion.duration_s,
@@ -158,24 +171,34 @@ class DryRunPrimitiveExecutor:
             {"skill_name": str(skill_name or "")},
         )
 
-    def play_sonic_reference_motion(
-        self, payload: Mapping[str, Any]
-    ) -> ExecuteActionResponse:
+    def play_sonic_reference_motion(self, payload: Mapping[str, Any]) -> ExecuteActionResponse:
         frames = payload.get("frames")
         frame_count = 0
         if isinstance(frames, Mapping):
             value = frames.get("joint_pos")
             frame_count = len(value) if value is not None else 0
+        executed_arguments = {
+            "primitive": "sonic_reference_motion",
+            "chair_distance_m": float(payload["chair_distance_m"]),
+            "reference_distance_m": float(payload["reference_distance_m"]),
+            "motion_name": str(payload.get("motion_name", "")),
+            "tag": str(payload.get("tag", "")),
+            "duration_s": float(payload.get("duration_s", 0.0)),
+            "frame_count": frame_count,
+        }
+        if payload.get("chair_yaw_deg") is not None:
+            executed_arguments["chair_yaw_deg"] = float(payload["chair_yaw_deg"])
+            executed_arguments["reference_yaw_deg"] = float(payload["reference_yaw_deg"])
+            executed_arguments["reference_isaac_strict"] = bool(payload["reference_isaac_strict"])
+            executed_arguments["reference_action_completed"] = bool(
+                payload["reference_action_completed"]
+            )
+            executed_arguments["reference_clean"] = bool(payload["reference_clean"])
+            executed_arguments["allow_non_clean_reference"] = bool(
+                payload["allow_non_clean_reference"]
+            )
         return self._success(
-            executed_arguments={
-                "primitive": "sonic_reference_motion",
-                "chair_distance_m": float(payload["chair_distance_m"]),
-                "reference_distance_m": float(payload["reference_distance_m"]),
-                "motion_name": str(payload.get("motion_name", "")),
-                "tag": str(payload.get("tag", "")),
-                "duration_s": float(payload.get("duration_s", 0.0)),
-                "frame_count": frame_count,
-            },
+            executed_arguments=executed_arguments,
             telemetry={
                 "motion": "sonic_reference_motion",
                 "sonic_input": "reference_motion",
@@ -229,7 +252,9 @@ class DryRunPrimitiveExecutor:
             "telemetry": response_telemetry,
         }
 
-    def _failure(self, error_message: str, telemetry: JSONDict | None = None) -> ExecuteActionResponse:
+    def _failure(
+        self, error_message: str, telemetry: JSONDict | None = None
+    ) -> ExecuteActionResponse:
         response_telemetry: JSONDict = {
             "runtime_mode": self.runtime_mode,
             "controller": "dry_run",
@@ -262,7 +287,9 @@ class DryRunPrimitiveExecutor:
         if "distance_m" in arguments:
             magnitude = abs(self._float(arguments["distance_m"], "distance_m"))
         elif "magnitude" in arguments:
-            magnitude = abs(self._float(arguments["magnitude"], "magnitude")) * self.default_distance_m
+            magnitude = (
+                abs(self._float(arguments["magnitude"], "magnitude")) * self.default_distance_m
+            )
         else:
             magnitude = self.default_distance_m
         return sign * magnitude
@@ -273,7 +300,9 @@ class DryRunPrimitiveExecutor:
         elif "angle_deg" in arguments:
             magnitude = abs(self._float(arguments["angle_deg"], "angle_deg"))
         elif "magnitude" in arguments:
-            magnitude = abs(self._float(arguments["magnitude"], "magnitude")) * self.default_turn_degrees
+            magnitude = (
+                abs(self._float(arguments["magnitude"], "magnitude")) * self.default_turn_degrees
+            )
         else:
             magnitude = self.default_turn_degrees
         return sign * magnitude
