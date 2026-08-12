@@ -17,6 +17,9 @@ EXACT_V3_CATALOG = Path(__file__).resolve().parent / "data/facee_chair_13s_exact
 STAGE1_GENERALIST_YAW_CATALOG = (
     Path(__file__).resolve().parent / "data/facee_stage1_generalist_yaw_clean6/manifest.json"
 )
+STAGE1_GENERALIST_YAW_HARDWARE_CATALOG = (
+    Path(__file__).resolve().parent / "data/facee_stage1_generalist_yaw_hardware18/manifest.json"
+)
 STAGE1_GENERALIST_YAW_FULL_CATALOG = (
     Path(__file__).resolve().parent / "data/facee_stage1_generalist_yaw_full403/manifest.json"
 )
@@ -197,6 +200,32 @@ class ChairMotionCatalog:
             upper = _finite_float(bounds[1], name)
             if lower > upper:
                 raise ValueError(f"selection_contract.{name} is reversed")
+        windows = contract.get("measured_distance_windows_m")
+        if windows is not None:
+            if not isinstance(windows, list) or not windows:
+                raise ValueError("selection_contract.measured_distance_windows_m must be non-empty")
+            for bounds in windows:
+                self._validate_bounds(bounds, "measured_distance_windows_m")
+        yaw_ranges = contract.get("measured_yaw_range_deg_by_reference_distance")
+        if yaw_ranges is not None:
+            if not isinstance(yaw_ranges, dict) or not yaw_ranges:
+                raise ValueError(
+                    "selection_contract.measured_yaw_range_deg_by_reference_distance "
+                    "must be non-empty"
+                )
+            for distance, bounds in yaw_ranges.items():
+                _finite_float(distance, "reference_distance_m")
+                self._validate_bounds(bounds, "measured_yaw_range_deg_by_reference_distance")
+
+    @staticmethod
+    def _validate_bounds(bounds: Any, name: str) -> tuple[float, float]:
+        if not isinstance(bounds, list) or len(bounds) != 2:
+            raise ValueError(f"selection_contract.{name} must contain two values")
+        lower = _finite_float(bounds[0], name)
+        upper = _finite_float(bounds[1], name)
+        if lower > upper:
+            raise ValueError(f"selection_contract.{name} is reversed")
+        return lower, upper
 
     def _select_yaw_record(
         self, distance_m: Any, yaw_deg: Any | None
@@ -210,17 +239,38 @@ class ChairMotionCatalog:
                 f"chair_distance_m={measured_distance} is outside the supported "
                 f"measured range [{distance_bounds[0]}, {distance_bounds[1]}] m"
             )
+        distance_windows = self._selection_contract.get("measured_distance_windows_m")
+        if distance_windows is not None and not any(
+            float(bounds[0]) <= measured_distance <= float(bounds[1]) for bounds in distance_windows
+        ):
+            raise ValueError(
+                f"chair_distance_m={measured_distance} is outside the supported "
+                f"measured distance windows {distance_windows} m"
+            )
         if not float(yaw_bounds[0]) <= measured_yaw <= float(yaw_bounds[1]):
             raise ValueError(
                 f"chair_yaw_deg={measured_yaw} is outside the supported measured "
                 f"range [{yaw_bounds[0]}, {yaw_bounds[1]}] deg"
             )
+        distance_key = min(
+            {key[0] for key in self._yaw_records},
+            key=lambda item: (abs(item / 100.0 - measured_distance), item),
+        )
+        yaw_ranges = self._selection_contract.get("measured_yaw_range_deg_by_reference_distance")
+        if yaw_ranges is not None:
+            range_key = f"{distance_key / 100.0:.2f}"
+            per_distance_bounds = yaw_ranges.get(range_key)
+            if per_distance_bounds is None:
+                raise ValueError(f"selection contract has no yaw range for {range_key} m")
+            if not float(per_distance_bounds[0]) <= measured_yaw <= float(per_distance_bounds[1]):
+                raise ValueError(
+                    f"chair_yaw_deg={measured_yaw} is outside the supported "
+                    f"measured range {per_distance_bounds} deg at {range_key} m"
+                )
         key = min(
-            self._yaw_records,
+            (key for key in self._yaw_records if key[0] == distance_key),
             key=lambda item: (
-                abs(item[0] / 100.0 - measured_distance),
                 abs(item[1] - measured_yaw),
-                item[0],
                 item[1],
             ),
         )

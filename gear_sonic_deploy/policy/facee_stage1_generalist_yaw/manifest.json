@@ -91,6 +91,26 @@
       "distance_range_m": [1.45, 1.45],
       "yaw_range_deg": [0, 25]
     },
+    "hardware_test_sit18": {
+      "path": "gear_sonic/vigil_bridge/data/facee_stage1_generalist_yaw_hardware18/manifest.json",
+      "oss_prefix": "oss://xrobot-data/fs/r2s_ego_exp/GR00T-WholeBodyControl_Vigil/policy/facee_stage1_generalist_yaw/motion_catalog_hardware18/",
+      "manifest_size_bytes": 32469,
+      "manifest_sha256": "414a07274fedbabd906e94cc078e5d396c65558b5c87e43a7c8380c9efabb5c9",
+      "motion_size_bytes": 4659309,
+      "count": 18,
+      "distance_m": [1.45, 2.0, 2.4],
+      "yaw_deg_by_distance_m": {
+        "1.45": [0, 5, 10, 15, 20, 25],
+        "2.00": [-15, -10, -5, 0, 5, 10],
+        "2.40": [-15, -10, -5, 0, 5, 10]
+      },
+      "mode": "sit",
+      "stand_included": false,
+      "two_simulator_clean": 6,
+      "two_simulator_action_complete_non_clean": 12,
+      "non_clean_reference_requires_explicit_opt_in": true,
+      "reuses_full403_npz_bytes_exactly": true
+    },
     "full_sit_403": {
       "path_after_fetch": "gear_sonic/vigil_bridge/data/facee_stage1_generalist_yaw_full403/manifest.json",
       "oss_prefix": "oss://xrobot-data/fs/r2s_ego_exp/GR00T-WholeBodyControl_Vigil/policy/facee_stage1_generalist_yaw/motion_catalog_full403/",
@@ -127,8 +147,18 @@
     "isaac_strict": 6,
     "direct_mujoco_clean": 6
   },
+  "packaged_hardware_test_scope": {
+    "distance_m": [1.45, 2.0, 2.4],
+    "condition_count": 18,
+    "isaac_strict": 18,
+    "direct_mujoco_action_complete": 18,
+    "direct_mujoco_clean": 6,
+    "explicit_non_clean_opt_in": 12,
+    "mode": "sit",
+    "stand_included": false
+  },
   "deployment_status": {
     "real_robot_authorized": false,
-    "reason": "Two-simulator clean results are necessary evidence, not hardware authorization. The other 397 conditions are deliberately excluded."
+    "reason": "Two-simulator results are evidence, not hardware authorization. The 12 requested 2.00/2.40 m conditions are action-complete but non-clean and remain fail-closed without explicit opt-in."
   }
 }

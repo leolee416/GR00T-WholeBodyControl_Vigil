@@ -11,6 +11,7 @@ from gear_sonic.vigil_bridge.chair_motion_catalog import (
     DEFAULT_CATALOG,
     EXACT_V3_CATALOG,
     STAGE1_GENERALIST_YAW_CATALOG,
+    STAGE1_GENERALIST_YAW_HARDWARE_CATALOG,
 )
 from gear_sonic.vigil_bridge.primitive_executor import DryRunPrimitiveExecutor
 from gear_sonic.vigil_bridge.real_adapter import (
@@ -107,6 +108,108 @@ def test_stage1_yaw_catalog_fails_closed_outside_packaged_scope(
 ) -> None:
     with pytest.raises(ValueError):
         ChairMotionCatalog(STAGE1_GENERALIST_YAW_CATALOG).load(distance, yaw)
+
+
+def test_stage1_hardware18_is_exact_sit_only_subset() -> None:
+    catalog = ChairMotionCatalog(STAGE1_GENERALIST_YAW_HARDWARE_CATALOG)
+    manifest = json.loads(STAGE1_GENERALIST_YAW_HARDWARE_CATALOG.read_text(encoding="utf-8"))
+    records_by_distance = {
+        distance: [row for row in manifest["motions"] if float(row["distance_m"]) == distance]
+        for distance in (1.45, 2.0, 2.4)
+    }
+    assert manifest["name"] == "facee_stage1_generalist_yaw_hardware18_sit_only"
+    assert manifest["count"] == 18
+    assert manifest["mode"] == "sit"
+    assert manifest["stand_included"] is False
+    assert manifest["subset_provenance"]["reuse_exact_npz_bytes"] is True
+    assert catalog.distances_m == [1.45, 2.0, 2.4]
+    assert catalog.yaws_deg == [-15, -10, -5, 0, 5, 10, 15, 20, 25]
+    assert [row["chair_yaw_deg"] for row in records_by_distance[1.45]] == [
+        0,
+        5,
+        10,
+        15,
+        20,
+        25,
+    ]
+    for distance in (2.0, 2.4):
+        assert [row["chair_yaw_deg"] for row in records_by_distance[distance]] == [
+            -15,
+            -10,
+            -5,
+            0,
+            5,
+            10,
+        ]
+    assert all("stand" not in row["tag"].lower() for row in manifest["motions"])
+
+
+def test_stage1_hardware18_reuses_clean6_assets_byte_for_byte() -> None:
+    clean = json.loads(STAGE1_GENERALIST_YAW_CATALOG.read_text(encoding="utf-8"))
+    hardware = json.loads(STAGE1_GENERALIST_YAW_HARDWARE_CATALOG.read_text(encoding="utf-8"))
+    hardware_by_tag = {row["tag"]: row for row in hardware["motions"]}
+    for clean_record in clean["motions"]:
+        hardware_record = hardware_by_tag[clean_record["tag"]]
+        assert hardware_record["sha256"] == clean_record["sha256"]
+        clean_asset = STAGE1_GENERALIST_YAW_CATALOG.parent / clean_record["file"]
+        hardware_asset = STAGE1_GENERALIST_YAW_HARDWARE_CATALOG.parent / hardware_record["file"]
+        assert hardware_asset.read_bytes() == clean_asset.read_bytes()
+
+
+@pytest.mark.parametrize("distance", [2.0, 2.4])
+@pytest.mark.parametrize("yaw", [-15, -10, -5, 0, 5, 10])
+def test_stage1_hardware18_non_clean_distance_requires_explicit_opt_in(
+    distance: float, yaw: int
+) -> None:
+    catalog = ChairMotionCatalog(STAGE1_GENERALIST_YAW_HARDWARE_CATALOG)
+    with pytest.raises(ValueError, match="allow_non_clean_reference=true"):
+        catalog.load(distance, yaw)
+    motion = catalog.load(distance, yaw, allow_non_clean=True)
+    assert motion.reference_distance_m == distance
+    assert motion.reference_yaw_deg == yaw
+    assert motion.reference_isaac_strict is True
+    assert motion.reference_action_completed is True
+    assert motion.reference_clean is False
+
+
+def test_stage1_hardware18_clean_distance_does_not_require_non_clean_opt_in() -> None:
+    motion = ChairMotionCatalog(STAGE1_GENERALIST_YAW_HARDWARE_CATALOG).load(1.45, 25)
+    assert motion.tag == "d1p45_sit_yaw_p25"
+    assert motion.reference_clean is True
+
+
+@pytest.mark.parametrize(
+    ("distance", "yaw"),
+    [(1.70, 0), (2.20, 0), (2.00, 12.51), (2.40, 15), (1.45, -2.51)],
+)
+def test_stage1_hardware18_rejects_unpackaged_distance_yaw_regions(
+    distance: float, yaw: float
+) -> None:
+    with pytest.raises(ValueError):
+        ChairMotionCatalog(STAGE1_GENERALIST_YAW_HARDWARE_CATALOG).load(
+            distance, yaw, allow_non_clean=True
+        )
+
+
+def test_stage1_hardware18_dry_run_reports_non_clean_selection() -> None:
+    executor = DryRunPrimitiveExecutor(
+        chair_motion_catalog=ChairMotionCatalog(STAGE1_GENERALIST_YAW_HARDWARE_CATALOG)
+    )
+    response = executor.execute_action(
+        "sonic.sit_chair",
+        {
+            "chair_distance_m": 2.4,
+            "chair_yaw_deg": 0,
+            "allow_non_clean_reference": True,
+        },
+        {},
+    )
+    assert response["ok"] is True
+    assert response["executed_arguments"]["tag"] == "d2p40_sit_yaw_p00"
+    assert response["executed_arguments"]["reference_distance_m"] == 2.4
+    assert response["executed_arguments"]["reference_yaw_deg"] == 0.0
+    assert response["executed_arguments"]["reference_clean"] is False
+    assert response["executed_arguments"]["allow_non_clean_reference"] is True
 
 
 def test_full_yaw_catalog_requires_explicit_non_clean_opt_in(
